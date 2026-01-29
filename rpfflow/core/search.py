@@ -1,11 +1,9 @@
-import networkx as nx
 from copy import deepcopy
 from collections import deque
-from rules.matchs import is_isomorphic, is_duplicate, match_target
-from rules.basica import dissociate, associate, update_valence
-from graph_mm.graph_ops import split_graph, merge_graphs
-from graph_mm.molgraph import create_common_molecules, rdkit_to_ase, nx_to_rdkit
-from pathways.gp_data import GraphState, SearchNode
+from rpfflow.rules import is_isomorphic, is_duplicate
+from rpfflow.rules import dissociate, associate, update_valence
+from rpfflow.utils.graph_ops import split_graph, merge_graphs
+from rpfflow.core.state import GraphState, SearchNode
 
 import logging
 
@@ -200,8 +198,8 @@ def bfs_search(state_start, state_target, n_hydrogen=8):
 
 
 if __name__ == "__main__":
-    from graph_mm.molgraph import create_mol, rdkit_to_nx, create_common_molecules, nx_to_rdkit, rdkit_to_ase
-    from graph_mm.visualizer import plot_molecular_graph, save_molecule_2d, plot_molecular_graphs
+    from rpfflow.utils.convert import create_mol, rdkit_to_nx, create_common_molecules
+    from rpfflow.utils.visualizer import plot_molecular_graphs
 
     # === 反应物：CO2 ===
     mol_react = create_mol("C")
@@ -212,7 +210,7 @@ if __name__ == "__main__":
     G_prod = rdkit_to_nx(mol_prod)
     update_valence(G_prod)
 
-    from rules.basica import check_element_conservation
+    from rpfflow.rules import check_element_conservation
     conserved, diffs = check_element_conservation(G_react, G_prod)
     print("元素是否守恒:", conserved)
     if not conserved:

@@ -11,87 +11,12 @@ Utilities for:
 Author: Xingze Geng
 """
 
-from copy import deepcopy
-from typing import Dict, Optional
-
+from typing import  Optional
 import networkx as nx
 from rdkit import Chem
-from rdkit.Chem import AllChem
 from ase import Atoms
 
 
-# ============================================================
-# RDKit molecule construction
-# ============================================================
-
-def create_mol(
-    smiles: Optional[str] = None,
-    structure: Optional[str] = None,
-    add_h: bool = False,
-    optimize: bool = False
-) -> Chem.Mol:
-    """
-    Create an RDKit molecule from SMILES or structure file.
-
-    Args:
-        smiles: SMILES string
-        structure: mol file path
-        add_h: whether to add hydrogens
-        optimize: whether to run UFF optimization
-
-    Returns:
-        RDKit Mol object with 3D conformer.
-    """
-    if smiles is not None:
-        mol = Chem.MolFromSmiles(smiles)
-    elif structure is not None:
-        mol = Chem.MolFromMolFile(structure)
-    else:
-        raise ValueError("Either smiles or structure must be provided.")
-
-    if mol is None:
-        raise ValueError("Failed to create RDKit Mol.")
-
-    if add_h:
-        mol = Chem.AddHs(mol)
-
-    Chem.SanitizeMol(mol, sanitizeOps=Chem.SANITIZE_ALL, catchErrors=True)
-
-    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
-    if optimize:
-        AllChem.UFFOptimizeMolecule(mol)
-
-    return mol
-
-
-def generate_coordinate(mol: Chem.Mol) -> Chem.Mol:
-    """
-    Safely generate 3D coordinates without enforcing full sanitization.
-    Suitable for TS or broken structures.
-    """
-    if not isinstance(mol, Chem.Mol):
-        raise TypeError("Input must be an RDKit Mol object.")
-
-    mol = Chem.Mol(mol)
-
-    try:
-        Chem.SanitizeMol(
-            mol,
-            sanitizeOps=Chem.SANITIZE_SETAROMATICITY |
-                        Chem.SANITIZE_FINDRADICALS |
-                        Chem.SANITIZE_SETCONJUGATION
-        )
-    except Exception as e:
-        print("[WARN] Partial sanitize failed (allowed):", e)
-        mol.UpdatePropertyCache(strict=False)
-
-    if mol.GetNumConformers() == 0:
-        params = AllChem.ETKDG()
-        params.useRandomCoords = True
-        if AllChem.EmbedMolecule(mol, params) != 0:
-            raise RuntimeError("3D embedding failed.")
-
-    return mol
 
 
 # ============================================================
@@ -159,6 +84,7 @@ def rdkit_to_ase(mol: Chem.Mol, box_size: Optional[float] = None) -> Atoms:
     """
     Convert RDKit Mol to ASE Atoms (no hydrogen enforcement).
     """
+    from rpfflow.core.structure import generate_coordinate
     mol = generate_coordinate(mol)
     conf = mol.GetConformer()
 
@@ -191,63 +117,6 @@ def nx_to_ase(G: nx.Graph, box_size: Optional[float] = None) -> Atoms:
     return atoms
 
 
-# ============================================================
-# Common molecular graph templates
-# ============================================================
-def create_common_molecules() -> Dict[str, nx.Graph]:
-    """
-    Build common molecular graph templates.
-    """
-    molecules = {}
-
-    smiles_dict = {
-        "OH_": "[OH-]",
-        "H": "[H]",
-        "H2O": "O",
-        "CO2": "O=C=O",
-    }
-
-    for name, smi in smiles_dict.items():
-        mol = create_mol(smi, add_h=True, optimize=True)
-        molecules[name] = rdkit_to_nx(mol)
-        print(f"[✓] {name} generated.")
-
-    from rules.basica import update_valence
-
-    # O=C-O-R
-    G1 = nx.Graph()
-    G1.add_nodes_from([
-        (0, {"symbol": "O"}),
-        (1, {"symbol": "C"}),
-        (2, {"symbol": "O"}),
-        (3, {"symbol": "F"}),  # active site
-    ])
-    G1.add_edge(0, 1, bond_order=2.0)
-    G1.add_edge(1, 2, bond_order=1.0)
-    G1.add_edge(2, 3, bond_order=1.0)
-    update_valence(G1)
-    molecules["OCOR"] = G1
-
-    # O=C(R)-O
-    G2 = nx.Graph()
-    G2.add_nodes_from([
-        (0, {"symbol": "O"}),
-        (1, {"symbol": "C"}),
-        (2, {"symbol": "O"}),
-        (3, {"symbol": "F"}),
-    ])
-    G2.add_edge(0, 1, bond_order=2.0)
-    G2.add_edge(1, 2, bond_order=1.0)
-    G2.add_edge(1, 3, bond_order=1.0)
-    update_valence(G2)
-    molecules["OCRO"] = G2
-
-    R = deepcopy(molecules["H"])
-    R.nodes[0]["symbol"] = "F"
-    update_valence(R)
-    molecules["F"] = R
-
-    return molecules
 
 
 # ============================================================
@@ -256,7 +125,8 @@ def create_common_molecules() -> Dict[str, nx.Graph]:
 
 if __name__ == "__main__":
     from ase.io import write
-    from graph_mm.visualizer import draw_graph
+    from rpfflow.utils.visualizer import draw_graph
+    from rpfflow.core.structure import generate_coordinate, create_mol, create_common_molecules
 
     mol = create_mol("OC=O", add_h=True, optimize=True)
     G = rdkit_to_nx(mol)

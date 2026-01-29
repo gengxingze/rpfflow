@@ -51,7 +51,7 @@ def match_target(G, target_list):
 
 
 if __name__ == "__main__":
-    from graph_mm.molgraph import create_mol, rdkit_to_nx, draw_mol, create_common_molecules
+    from rpfflow.utils.convert import create_mol, rdkit_to_nx, draw_mol, create_common_molecules
     # === 1. 构建分子图 ===
     smiles_formic = "OC=O"     # 甲酸
     smiles_cooh = "C(=O)O"     # 羧基结构
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     print("HCOOH vs HCOOH 同构？", is_isomorphic(G_formic, G_formic))
 
     # === 3. 测试子图同构 ===
-    from graph_mm.graph_ops import merge_graphs
+    from rpfflow.utils.graph_ops import merge_graphs
     graph_list = [G_formic, G_cooh]
     graph_list = merge_graphs(graph_list)
     print("\n=== 子图同构测试 ===")

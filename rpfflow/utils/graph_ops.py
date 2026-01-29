@@ -61,8 +61,9 @@ def demo():
     """
     Demo: build molecular graphs, merge and split them.
     """
-    from molgraph import create_mol, rdkit_to_nx
+    from convert import rdkit_to_nx
     from visualizer import plot_molecular_graph
+    from rpfflow.core.structure import create_mol
 
     mol1 = create_mol("OC=O", add_h=True)   # HCOOH
     mol2 = create_mol("C=O", add_h=True)    # H2CO

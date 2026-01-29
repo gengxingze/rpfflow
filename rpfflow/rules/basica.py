@@ -11,11 +11,11 @@ STANDARD_VALENCE = {
     "C": 4,
     "N": 3,
     "O": 2,
-    "F": 1,
     "S": 6,
     "Cl": 1,
     "Cu": 2,
     "Pt": 6,
+    "F": 1,
     "R": 1
 }
 
@@ -179,7 +179,7 @@ def associate(G: nx.Graph, atom1: int, atom2: int, bond_order: float = 1.0, enfo
 # 测试
 # =====================================================
 if __name__ == "__main__":
-    from graph_mm.molgraph import create_mol, rdkit_to_nx
+    from rpfflow.utils.convert import create_mol, rdkit_to_nx
     # 初始分子：甲酸 HCOOH
     smiles_start = "OC=O"
     mol_start = create_mol(smiles_start,add_h=True)

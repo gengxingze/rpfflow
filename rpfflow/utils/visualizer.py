@@ -229,7 +229,7 @@ def save_molecule_2d(
 # ============================================================
 
 if __name__ == "__main__":
-    from molgraph import (
+    from convert import (
         create_mol,
         rdkit_to_nx,
         generate_coordinate,
@@ -239,7 +239,7 @@ if __name__ == "__main__":
 
     mol = create_mol("O=C(O)C(=O)O", add_h=False)
     G = rdkit_to_nx(mol)
-    from pathways.gp_data import GraphState
+    from rpfflow.core.state import GraphState
     G = GraphState(graph=[G])
     G.update()
     plot_molecular_graph(G.graph[0], title="Formic acid", save_path="formic_graph.png")
@@ -247,6 +247,6 @@ if __name__ == "__main__":
     templates = create_common_molecules()
     mol_tmp = generate_coordinate(nx_to_rdkit(templates["OCRO"]))
     save_molecule_2d(mol_tmp)
-    save_molecule_2d(mol, filename="test.png")
+    save_molecule_2d(mol, filename="../../graph_mm/test.png")
 
     print("✓ Visualization done.")
