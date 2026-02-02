@@ -23,7 +23,7 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None):
     open_queue = deque([root_node])
 
     # 关键：RxnState 的不可变性支持了 $O(1)$ 复杂度的去重
-    visited = {initial_state}
+    # visited = {initial_state}
 
     found_count = 0
 
@@ -83,7 +83,7 @@ if __name__ == "__main__":
     from rpfflow.rules.basica import update_valence
 
     # === 构建反应物 / 生成物 ===
-    mol_react = create_mol("C")                 # CO2 (或简化占位)
+    mol_react = create_mol('[C]-F')                 # CO2 (或简化占位)
     mol_prod  = create_mol("C", add_h=True)     # CH3OH
 
     G_react = rdkit_to_nx(mol_react)
@@ -95,11 +95,15 @@ if __name__ == "__main__":
     # === 元素守恒检查 ===
     conserved, diffs = check_element_conservation(G_react, G_prod)
     # assert conserved, f"元素不守恒: {diffs}"
-    G_react = RxnState(graphs=(G_react,), h_reserve=8, stage="C")
+    from ase.io import read
+    from structure import get_reference_structure, save_reaction_path
+    slab = read("../../tests/POSCAR")
+    G_react = RxnState(graphs=(G_react,), h_reserve=5, stage="C-F", reference_structure=get_reference_structure(slab))
+
     # === 执行搜索 ===
     node = bfs_search(G_react, G_prod, n_hydrogen=8)
     path = node.reaction_history
-
+    save_reaction_path(path)
     # === 基本正确性断言 ===
     assert path is not None
     assert len(path) > 0, "未找到任何反应路径"

@@ -11,6 +11,9 @@ def print_hi(name):
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
+    from ase.visualize import view
+    from ase.io import read, write
+    aa = read("rpfflow/core/path_separated.traj", index=":")
     print_hi('PyCharm')
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/

@@ -3,11 +3,12 @@ import networkx as nx
 from ase import Atoms
 from functools import cached_property
 from dataclasses import dataclass, field, replace
-from typing import List, Optional, Iterator, Tuple
+from typing import List, Optional, Iterator, Tuple, Dict
+from rpfflow.utils.convert import nx_to_ase
+from rpfflow.core.structure import rotate_F, optimize_structure, generate_adsorption_structures
 
 
-
-@dataclass(frozen=True)  # 使对象不可变，天然支持 set 去重，这对 BFS 至关重要
+@dataclass(frozen=True)
 class RxnState:
     """
     rxnflow 核心状态类：
@@ -19,6 +20,7 @@ class RxnState:
     h_reserve: int = 0
     stage: str = "adsorption"
     penalty: float = 0.0
+    reference_structure: dict[str, Atoms] = None
 
     # =====================================================
     # 2. 自动缓存的计算属性 (替代原来的 update() 方法)
@@ -55,6 +57,56 @@ class RxnState:
             count += (list(symbols).count("f") + list(symbols).count("F"))
         return count
 
+    @cached_property
+    def stable_structures(self):
+        """
+        根据当前的 graphs 生成对应的 ASE Atoms 对象列表
+        """
+        stru_ase = []
+
+        for g in self.graphs:
+            stru = nx_to_ase(g)
+            formula = stru.get_chemical_formula()
+
+            # 1. 检查是否为预设的孤立小分子
+            if formula in self.reference_structure:
+                stru_ase.append(self.reference_structure[formula])
+                continue
+
+            # 2. 如果结构中没有 F 原子 (通常是干净表面或已脱离表面的产物)
+            if 'F' not in stru.get_chemical_symbols():
+                opt_stru = optimize_structure(stru)
+                stru_ase.append(opt_stru)
+                continue
+
+            # 3. 如果含有 F 原子 (作为占位符或吸附指示)
+            # 且长度不为 1 (排除孤立 F 原子)
+            symbols = stru.get_chemical_symbols()
+            if 'F' in symbols and len(stru) > 1:
+                # 旋转/调整含F的吸附质构型
+                stru = rotate_F(stru)
+                # 找到所有 F 原子的索引
+                f_indices = [atom.index for atom in stru if atom.symbol == 'F']
+                stru.pop(f_indices[0])
+                # 生成吸附结构
+                ads_structures_ase, _ = generate_adsorption_structures(
+                    adsorbate_ase=stru,
+                    slab_ase=self.reference_structure["F"]
+                )
+
+                choice_list = []
+                for choice_stru in ads_structures_ase:
+                    # 这里的 ss 应该是吸附在 slab 上的完整体系
+                    opt_stru = optimize_structure(choice_stru)
+                    choice_list.append(opt_stru)
+                # 找到能量最低的结构对象
+                best_stru = min(choice_list, key=lambda s: s.get_potential_energy())
+                stru_ase.append(best_stru)
+
+
+        # 4. 在电催化台阶图中，我们通常需要的是能量列表来绘图，而不是求和
+        # 如果你确实需要总能量，可以使用 sum(energies)
+        return stru_ase
     # =====================================================
     # 3. 状态演化工具
     # =====================================================
@@ -122,20 +174,22 @@ class SearchNode:
     @property
     def reaction_history(self) -> List[dict]:
         """
-        生成结构化的反应路径描述。
+        生成从根节点开始的完整反应路径描述。
         """
         history = []
         for node in self.iter_path():
-            if node.parent is None: continue  # 跳过初始节点
+            # 我们不再跳过根节点，而是根据是否为根节点来填充描述
+            is_root = node.parent is None
+
             history.append({
                 "step": node.depth,
-                "action": node.action,
-                "h_cost": node.step_h_cost,
+                "action": "START" if is_root else node.action,
+                "h_cost": 0.0 if is_root else node.step_h_cost,
                 "total_h": node.cumulative_h_cost,
-                "state": node.state
+                "state": node.state,
+                "stable_structures": node.state.stable_structures
             })
         return history
-
     # =====================================================
     # 辅助工具
     # =====================================================
@@ -144,16 +198,6 @@ class SearchNode:
         return (f"Node(id={self.node_id}, depth={self.depth}, "
                 f"action='{self.action}', cost={self.cumulative_h_cost}, "
                 f"state={self.state})")
-
-
-@dataclass
-class StructureItem:
-    graph: object
-    ase: Atoms
-    ads_ase: Atoms = None     # 替换F后的结构
-    aligned: bool = False    # 是否已做空间规范化
-    meta: dict = None        # 能量/标签/位点等
-
 
 
 

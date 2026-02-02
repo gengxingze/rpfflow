@@ -60,8 +60,9 @@ class DissociationAction(ReactionAction):
                             final_frags = frags
 
                         # 特殊逻辑 B: 如果是催化位点 F 参与的断裂（且氢量较低时允许）
-                        elif (state.h_reserve < 2) and (
+                        elif ((5-state.h_reserve) < 2) and (
                                 graph.nodes[u]["symbol"] == "F" or graph.nodes[v]["symbol"] == "F"):
+                            print("split F")
                             final_frags = list(frags)
                             h_cost = 0.0
                     else:
@@ -119,6 +120,7 @@ class HydrogenationAction(ReactionAction):
                             # 4. 生成新状态，消耗 1 个氢
                             new_graphs = [bonded_graph]
                             yield state.derive(new_graphs), f"Add H at {n}", 1.0
+                            print(f"Add H at {n}")
                         else:
                             print("add_hydrogen error 1 !")
                     else:

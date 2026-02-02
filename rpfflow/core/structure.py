@@ -1,16 +1,16 @@
 import numpy as np
 import networkx as nx
 from copy import deepcopy
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import BFGS
 from ase.constraints import FixAtoms
+from ase.io import write
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.io.ase import AseAtomsAdaptor
 from rpfflow.utils.convert import nx_to_ase, rdkit_to_nx
-from rpfflow.core.state import StructureItem
 
 
 
@@ -292,38 +292,75 @@ def generate_adsorption_structures(adsorbate_ase, slab_ase, repeat=(1, 1, 1),min
     return ads_structures_ase, ads_sites
 
 
+def get_reference_structure(slab_ase):
+    from ase.build import molecule
+    """
+    创建参考分子（H, H2O）并进行几何优化。
+    返回一个包含优化后 ASE 对象和原始 Slab 的字典。
+    """
+    # 1. 创建初始结构
+    # 'H' 原子的 potential_energy 建议直接设为参考值，或者创建孤立原子
+    h_atom = molecule('H')
+    # h_atom.set_cell([10, 10, 10])  # 给孤立原子一个足够大的真空层
+    h_atom.center()
 
-class HandleStructure:
-    def __init__(self, reaction_path, ads_sites=None):
-        self.ads_sites = ads_sites
-        self.steps = []
-        self._build_steps(reaction_path[:-2])
+    h2o_mol = molecule('H2O')
+    # h2o_mol.set_cell([12, 12, 12])
+    h2o_mol.center()
 
-    def _build_steps(self, reaction_path):
-        for i, state in enumerate(reaction_path):
-            ase_atoms = nx_to_ase(state["state"].graph[0])
-            ase_atoms = rotate_F(ase_atoms)
-            bb = ase_atoms.copy()
-            # 找到所有 F 原子的索引
-            f_indices = [i for i, s in enumerate(bb.get_chemical_symbols()) if s == "F"]
-            # 删除（支持一次删多个）
-            bb.pop(f_indices[0])
+    # 2. 几何优化
+    # 注意：孤立原子的 optimize_structure 可能会因为没有受力而跳过
+    print("--- 优化参考结构 H ---")
+    opt_h = optimize_structure(h_atom, device="cpu", fmax=0.05, steps=200)
 
-            from ase.build import fcc100
-            slab = fcc100('Cu',
-                          size=(3, 3, 3),  # 表面尺寸: 4x4, 厚度4层
-                          a=3.615,  # Cu 晶格常数 (Å)
-                          vacuum=12.0)  # 真空层厚度 (Å)
-            cc = generate_adsorption_structures(adsorbate_ase=bb, slab_ase=slab)
-            pp = []
-            for i, s in enumerate(cc[0]):
-                s = optimize_structure(s, device="cpu")
+    print("--- 优化参考结构 H2O ---")
+    opt_h2o = optimize_structure(h2o_mol, device="cpu", fmax=0.05, steps=200)
 
-            step = StructureItem(
-                graph=None,
-                ase=ase_atoms,
-                ads_ase=s,
-                aligned=False,
-                meta={}
-            )
-            self.steps.append(s)
+    opt_f = optimize_structure(slab_ase, device="cpu", fmax=0.05, steps=200)
+    # 3. 构建结果字典
+    reference_dict = {
+        "H": opt_h,
+        "H2O": opt_h2o,
+        "F": opt_f  # 将传入的 slab 作为 F 的参考（对应表面）
+    }
+
+    return reference_dict
+
+
+def save_reaction_path(history, filename="reaction_path.extxyz"):
+    from ase.calculators.singlepoint import SinglePointCalculator
+    path_frames = []
+
+    for entry in history:
+        structures = entry["stable_structures"]  # 这是一个 [Atoms, Atoms, ...] 列表
+
+        if not structures:
+            continue
+
+        for i, atoms in enumerate(structures):
+            # 1. 创建副本，防止修改原始数据
+            temp_atoms = atoms.copy()
+
+            # 2. 提取并注入能量和受力
+            # 这样 write 时，每个碎片都会带有它自己的物理信息
+            try:
+                energy = atoms.get_potential_energy()
+                forces = atoms.get_forces()
+                temp_atoms.calc = SinglePointCalculator(
+                    temp_atoms, energy=energy, forces=forces
+                )
+            except Exception as e:
+                # 如果没有计算器信息，则跳过计算器设置
+                print(f"Step {entry['step']} fragment {i} has no energy/force: {e}")
+
+            # 3. 注入元数据
+            temp_atoms.info['step'] = entry['step']
+            temp_atoms.info['action'] = entry['action']
+            temp_atoms.info['fragment_id'] = i  # 标记这是该步骤中的第几个碎片
+
+            path_frames.append(temp_atoms)
+
+    # 4. 写入文件
+    write(filename, path_frames)
+    print(f"成功导出 {len(path_frames)} 个独立碎片结构至 {filename}")
+
