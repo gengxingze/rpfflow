@@ -7,10 +7,9 @@ from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import BFGS
 from ase.constraints import FixAtoms
-from ase.io import write
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.io.ase import AseAtomsAdaptor
-from rpfflow.utils.convert import nx_to_ase, rdkit_to_nx
+from rpfflow.utils.convert import rdkit_to_nx
 
 
 
@@ -327,40 +326,50 @@ def get_reference_structure(slab_ase):
     return reference_dict
 
 
-def save_reaction_path(history, filename="reaction_path.extxyz"):
-    from ase.calculators.singlepoint import SinglePointCalculator
-    path_frames = []
+def process_extxyz_energies(filename):
+    """
+    读取extxyz，按step合并能量并拼接化学式
+    """
+    from collections import defaultdict
+    from ase.io import read
+    # 用于存储数据：{step: {'energy': total_energy, 'formulas': [formula1, formula2, ...]}}
+    step_data = defaultdict(lambda: {'energy': 0.0, 'formulas': []})
 
-    for entry in history:
-        structures = entry["stable_structures"]  # 这是一个 [Atoms, Atoms, ...] 列表
+    # 1. 加载所有结构
+    # index=':' 表示读取文件中所有的构型
+    configs = read(filename, index=':')
 
-        if not structures:
-            continue
+    for atoms in configs:
+        # 获取当前构型的 step (从 atoms.info 字典中读取)
+        # 如果 atoms.info 中没有 'step'，则默认为 0
+        step = atoms.info.get('step', 0)
 
-        for i, atoms in enumerate(structures):
-            # 1. 创建副本，防止修改原始数据
-            temp_atoms = atoms.copy()
+        # 获取能量 (假设能量存储在 atoms.info['energy'])
+        # 如果 extxyz 里没有能量字段，可能需要 atoms.get_potential_energy()
+        energy = atoms.get_potential_energy()
 
-            # 2. 提取并注入能量和受力
-            # 这样 write 时，每个碎片都会带有它自己的物理信息
-            try:
-                energy = atoms.get_potential_energy()
-                forces = atoms.get_forces()
-                temp_atoms.calc = SinglePointCalculator(
-                    temp_atoms, energy=energy, forces=forces
-                )
-            except Exception as e:
-                # 如果没有计算器信息，则跳过计算器设置
-                print(f"Step {entry['step']} fragment {i} has no energy/force: {e}")
+        # 获取化学式
+        formula = atoms.get_chemical_formula()
 
-            # 3. 注入元数据
-            temp_atoms.info['step'] = entry['step']
-            temp_atoms.info['action'] = entry['action']
-            temp_atoms.info['fragment_id'] = i  # 标记这是该步骤中的第几个碎片
+        # 累加能量并记录化学式
+        step_data[step]['energy'] += energy
+        step_data[step]['formulas'].append(formula)
 
-            path_frames.append(temp_atoms)
+    # 2. 整理输出
+    sorted_steps = sorted(step_data.keys())
+    final_energies = []
+    final_labels = []
 
-    # 4. 写入文件
-    write(filename, path_frames)
-    print(f"成功导出 {len(path_frames)} 个独立碎片结构至 {filename}")
+    for s in sorted_steps:
+        total_e = step_data[s]['energy']
+        # 将化学式用 '+' 连接
+        combined_formula = " + ".join(step_data[s]['formulas'])
+
+        final_energies.append(total_e)
+        final_labels.append(combined_formula)
+
+        print(f"Step {s}: Energy = {total_e:.4f} eV, Formula = {combined_formula}")
+
+    return final_energies, final_labels
+
 

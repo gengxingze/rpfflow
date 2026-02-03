@@ -7,7 +7,7 @@ from rpfflow.rules.matchs import is_duplicate
 logger = logging.getLogger(__name__)
 
 
-def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None):
+def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, max_paths=5):
     """
     重构后的搜索引擎：
     - initial_state: RxnState 实例
@@ -26,19 +26,24 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None):
     # visited = {initial_state}
 
     found_count = 0
-
+    found_paths = []  # 存储找到的 SearchNode
     while open_queue:
         current_node = open_queue.popleft()
         state = current_node.state
 
         # --- 1. 目标检查 (利用 RxnState 缓存的 carbon_indices 提高效率) ---
-        for idx in state.carbon_indices:
-            # 检查当前状态中的任一含碳片段是否匹配目标
-            if is_duplicate( target_graph,state.graphs):
-                found_count += 1
-                logger.info(f"🎯 找到生成物路径！路径编号: {found_count}, 深度: {current_node.depth}")
-                # 如果只需要一条路径，直接返回；如果需要多条，可在此记录后继续 loop
-                return current_node
+        # 只要当前状态包含目标产物，就记录该节点
+        if is_duplicate(target_graph, state.graphs):
+            found_paths.append(current_node)
+            logger.info(f"🎯 找到生成物路径！已找到: {len(found_paths)}/{max_paths}, 深度: {current_node.depth}")
+
+            # 达到设定数量则提前结束
+            if len(found_paths) >= max_paths:
+                logger.info(f"已达到最大路径数 {max_paths}，停止搜索。")
+                return found_paths
+
+            # 注意：一旦某个节点判定为目标，通常不需要再从它向下演化
+            continue
 
         # --- 2. 规则驱动的状态演化 ---
         for rule in rules:
@@ -63,9 +68,10 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None):
                     )
                     open_queue.append(child_node)
 
-    logger.warning("搜索结束，未找到更多可行路径。")
-    return None
+    if not found_paths:
+        logger.warning("搜索结束，未找到任何可行路径。")
 
+    return found_paths  # 返回所有找到的终点节点列表
 
 if __name__ == "__main__":
     """
@@ -83,7 +89,7 @@ if __name__ == "__main__":
     from rpfflow.rules.basica import update_valence
 
     # === 构建反应物 / 生成物 ===
-    mol_react = create_mol('[C]-F')                 # CO2 (或简化占位)
+    mol_react = create_mol('O=C(F)O')                 # CO2 (或简化占位)
     mol_prod  = create_mol("C", add_h=True)     # CH3OH
 
     G_react = rdkit_to_nx(mol_react)
@@ -96,21 +102,34 @@ if __name__ == "__main__":
     conserved, diffs = check_element_conservation(G_react, G_prod)
     # assert conserved, f"元素不守恒: {diffs}"
     from ase.io import read
-    from structure import get_reference_structure, save_reaction_path
+    from structure import get_reference_structure, create_mol
+
     slab = read("../../tests/POSCAR")
-    G_react = RxnState(graphs=(G_react,), h_reserve=5, stage="C-F", reference_structure=get_reference_structure(slab))
+    G_react = RxnState(graphs=(G_react,), h_reserve=8, stage="[O]C(=O)F", reference_structure=get_reference_structure(slab))
 
     # === 执行搜索 ===
     node = bfs_search(G_react, G_prod, n_hydrogen=8)
-    path = node.reaction_history
-    save_reaction_path(path)
-    # === 基本正确性断言 ===
-    assert path is not None
-    assert len(path) > 0, "未找到任何反应路径"
+    print(f"[OK] 找到 {len(node)} 步反应路径")
+    paths = []
+    # for x, n in enumerate(node):
+    #     nnpp = n.reaction_history
+    #     paths.append(nnpp)
+    #     n.save_reaction_path(f"path_{x}.extxyz")
 
-    for step in path:
-        assert "state" in step
-        assert hasattr(step["state"], "graphs")
+    from rpfflow.core.state import collect_paths_from_nodes, save_search_results, load_search_results
+    save_search_results(paths)
+    paths = load_search_results()
+    from rpfflow.utils.visualizer import plot_reaction_tree
+    cc = collect_paths_from_nodes(node)
+    print(cc)
+    plot_reaction_tree(cc)
+    from rpfflow.utils.visualizer import save_molecule_2d
 
-    print(f"[OK] 找到 {len(path)} 步反应路径")
+    for i, x in enumerate(cc[0]):
+        m = create_mol(x, add_h=True)
+        save_molecule_2d(m, f"../../tests/mol_{i}.png")
+
+
+    # print(f"[OK] 找到 {len(paths)} 步反应路径")
+    print("Done")
 

@@ -1,10 +1,11 @@
 import time
+import pickle
 import networkx as nx
 from ase import Atoms
 from functools import cached_property
 from dataclasses import dataclass, field, replace
-from typing import List, Optional, Iterator, Tuple, Dict
-from rpfflow.utils.convert import nx_to_ase
+from typing import List, Optional, Iterator, Tuple
+from rpfflow.utils.convert import nx_to_ase, nx_to_rdkit
 from rpfflow.core.structure import rotate_F, optimize_structure, generate_adsorption_structures
 
 
@@ -186,20 +187,125 @@ class SearchNode:
                 "action": "START" if is_root else node.action,
                 "h_cost": 0.0 if is_root else node.step_h_cost,
                 "total_h": node.cumulative_h_cost,
-                "state": node.state,
-                "stable_structures": node.state.stable_structures
+                "state": node.state
             })
         return history
     # =====================================================
     # 辅助工具
     # =====================================================
-
     def __repr__(self):
         return (f"Node(id={self.node_id}, depth={self.depth}, "
                 f"action='{self.action}', cost={self.cumulative_h_cost}, "
                 f"state={self.state})")
 
+    def save_reaction_path(self, filename="reaction_path.extxyz"):
+        from ase.calculators.singlepoint import SinglePointCalculator
+        from ase.io import write
+        path_frames = []
+        history = self.reaction_history
+        for entry in history:
+            structures = entry["state"].stable_structures  # 这是一个 [Atoms, Atoms, ...] 列表
+
+            if not structures:
+                continue
+
+            for i, atoms in enumerate(structures):
+                # 1. 创建副本，防止修改原始数据
+                temp_atoms = atoms.copy()
+
+                # 2. 提取并注入能量和受力
+                # 这样 write 时，每个碎片都会带有它自己的物理信息
+                try:
+                    energy = atoms.get_potential_energy()
+                    forces = atoms.get_forces()
+                    temp_atoms.calc = SinglePointCalculator(
+                        temp_atoms, energy=energy, forces=forces
+                    )
+                except Exception as e:
+                    # 如果没有计算器信息，则跳过计算器设置
+                    print(f"Step {entry['step']} fragment {i} has no energy/force: {e}")
+
+                # 3. 注入元数据
+                temp_atoms.info['step'] = entry['step']
+                temp_atoms.info['action'] = entry['action']
+                temp_atoms.info['fragment_id'] = i  # 标记这是该步骤中的第几个碎片
+
+                path_frames.append(temp_atoms)
+
+        # 4. 写入文件
+        write(filename, path_frames)
+        print(f"成功导出 {len(path_frames)} 个独立碎片结构至 {filename}")
 
 
+def get_state_signature(state: RxnState):
+    """
+    生成 RxnState 的唯一签名：
+    - simple_smiles: 折叠氢原子后的紧凑格式，适合绘图标签 (例如 [CH4], [CH3OH])
+    - complex_smiles: 全显式氢格式，包含所有拓扑连接，适合底层对比
+    """
+    from rdkit import Chem
+    simple_list = []
+    complex_list = []
+
+    for g in state.graphs:
+        # 1. 基础转换 (此时含有 nx.Graph 中定义的独立 H 节点)
+        mol = nx_to_rdkit(g)
+
+        # --- 生成 Complex SMILES (全显式) ---
+        # 保持原样，不合并 H
+        c_smiles = Chem.MolToSmiles(mol)
+        complex_list.append(c_smiles)
+
+        # --- 生成 Simple SMILES (折叠式) ---
+        # 使用 RemoveHs 将独立 H 节点折叠为原子的属性
+        try:
+            # 必须先做一个副本，避免修改原 mol 影响 complex_list
+            mol_copy = Chem.Mol(mol)
+            # RemoveHs 会根据成键关系自动处理隐式氢
+            simple_mol = Chem.RemoveHs(mol_copy)
+
+            # allHsExplicit=True 确保显示为 [CH4] 而不是 C
+            # 这对电催化中间体非常重要，能一眼看出质子化程度
+            s_smiles = Chem.MolToSmiles(simple_mol, allHsExplicit=True)
+            simple_list.append(s_smiles)
+        except Exception:
+            # 万一折叠失败（例如非标准价态），回退到原始输出
+            simple_list.append(c_smiles)
+
+    # 排序确保顺序无关性（例如 A+B 和 B+A 视为同一状态）
+    # 使用 " . " 连接符合 RDKit 的多组分 SMILES 标准
+    # final_simple = " . ".join(sorted(simple_list))
+    # final_complex = " . ".join(sorted(complex_list))
+
+    return simple_list, complex_list
+
+
+def collect_paths_from_nodes(end_nodes: List[SearchNode]) -> List[List[str]]:
+    """
+    将搜索到的终点节点列表转化为绘图所需的签名路径列表。
+    """
+    all_paths = []
+    for node in end_nodes:
+        path_signatures = []
+        # 使用你定义的 iter_path() 回溯
+        for step_node in node.iter_path():
+            signature = get_state_signature(step_node.state)
+            path_signatures.append(signature[0][0])
+        all_paths.append(path_signatures)
+    return all_paths
+
+
+
+
+def save_search_results(found_paths: list, filename: str = "debug_paths.pkl"):
+    """保存搜索结果的所有节点对象"""
+    with open(filename, "wb") as f:
+        pickle.dump(found_paths, f)
+    print(f"✅ 原始路径数据已保存至 {filename}")
+
+def load_search_results(filename: str = "debug_paths.pkl"):
+    """加载保存的路径数据"""
+    with open(filename, "rb") as f:
+        return pickle.load(f)
 
 

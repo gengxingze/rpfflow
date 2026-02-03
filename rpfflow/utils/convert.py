@@ -15,7 +15,7 @@ from typing import  Optional
 import networkx as nx
 from rdkit import Chem
 from ase import Atoms
-
+from rpfflow.rules.basica import update_valence
 
 
 
@@ -45,36 +45,61 @@ def rdkit_to_nx(mol: Chem.Mol) -> nx.Graph:
 
 def nx_to_rdkit(G: nx.Graph) -> Chem.Mol:
     """
-    Convert NetworkX molecular graph to RDKit Mol.
-    Requires:
-        node: symbol
-        edge: bond_order
+    将 NetworkX 分子图转换为 RDKit Mol，并根据剩余价态自动设置自由基。
     """
+    # 1. 首先调用更新价态的辅助函数
+    # 确保每个节点都有了 "valence" 属性
+    update_valence(G)
+
     mol = Chem.RWMol()
     node_map = {}
 
+    # 2. 添加原子并处理自由基
     for nid, attr in G.nodes(data=True):
-        atom = Chem.Atom(attr.get("symbol", "C"))
+        symbol = attr.get("symbol", "C")
+        atom = Chem.Atom(symbol)
+
+        # 处理电荷
         if "formal_charge" in attr:
             atom.SetFormalCharge(attr["formal_charge"])
+
+        # --- 核心逻辑：处理自由基 ---
+        # 获取 update_valence 计算出的剩余价态
+        rem_valence = attr.get("valence", 0)
+
+        if rem_valence > 0:
+            # 如果剩余价态 > 0，说明存在未成对电子
+            # 设置自由基电子数。通常为 1，也可以设为 rem_valence
+            atom.SetNumRadicalElectrons(int(rem_valence))
+
+            # 为了防止 RDKit 自动补氢把自由基“抹除”
+            # 我们显式关闭该原子的隐式氢处理
+            atom.SetNoImplicit(True)
+        # --------------------------
+
         node_map[nid] = mol.AddAtom(atom)
 
+    # 3. 添加化学键
     bond_map = {
-        1: Chem.BondType.SINGLE,
-        2: Chem.BondType.DOUBLE,
-        3: Chem.BondType.TRIPLE,
+        1.0: Chem.BondType.SINGLE,
+        2.0: Chem.BondType.DOUBLE,
+        3.0: Chem.BondType.TRIPLE,
     }
 
     for i, j, attr in G.edges(data=True):
-        # 获取键阶并匹配到 RDKit 键类型
-        bond_order = attr.get("bond_order")
+        bond_order = attr.get("bond_order", 1.0)
         bond_type = bond_map.get(bond_order, Chem.BondType.SINGLE)
 
-        # 添加化学键（若节点存在于映射中）
         if i in node_map and j in node_map:
             mol.AddBond(node_map[i], node_map[j], bond_type)
 
-    return mol.GetMol()
+    # 4. 转换回普通的 Mol 对象
+    final_mol = mol.GetMol()
+
+    # 最后进行简单的检查，但不进行严格的 Sanitize（因为自由基可能不符合标准价键规则）
+    final_mol.UpdatePropertyCache(strict=False)
+
+    return final_mol
 
 
 # ============================================================
