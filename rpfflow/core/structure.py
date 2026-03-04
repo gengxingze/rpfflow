@@ -1,17 +1,20 @@
+import logging
 import numpy as np
 import networkx as nx
 from copy import deepcopy
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import BFGS
 from ase.constraints import FixAtoms
+from collections import Counter
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.io.ase import AseAtomsAdaptor
 from rpfflow.utils.convert import rdkit_to_nx
 
 
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # RDKit molecule construction
@@ -193,27 +196,36 @@ def rotate_F(atoms: Atoms):
     return atoms
 
 
-def optimize_structure(atoms, device="cpu",
+def optimize_structure(atoms, model_size="small",
                        fmax=0.05, steps=200, fix_mask=None):
     """
-    对 atoms 对象执行结构优化
-    - atoms: ASE Atoms
-    - model: MACE 势模型大小，例如 small / medium / large
-    - device: cpu 或 cuda
+    对 atoms 对象执行结构优化，自动检测 GPU/CUDA 资源
+
+    - atoms: ASE Atoms 对象
+    - model_size: MACE 势模型大小 ('small', 'medium', 'large')
     - fmax: 最大力阈值 (eV/Å)
     - steps: 最大优化步数
     - fix_mask: 用于固定部分原子的布尔列表 (可选)
     """
-    # 固定原子
+    import torch
+    from mace.calculators import mace_mp
+
+    # 1. 自动检测设备
+    # 如果 CUDA 可用则使用 cuda，否则回退到 cpu
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # print(f"正在使用设备: {device.upper()}")
+
+    # 2. 固定原子 (Constraints)
     if fix_mask is not None:
         atoms.set_constraint(FixAtoms(mask=fix_mask))
 
-    # 构造 MACE 势计算器
-    from mace.calculators import mace_mp
-    calc = mace_mp(model="small", device='cpu')
+    # 3. 构造 MACE 势计算器
+    # 注意：这里使用了传入的 model_size 和 自动检测的 device
+    calc = mace_mp(model=model_size, device=device, default_dtype="float32")
     atoms.calc = calc
 
-    # BFGS 优化器
+    # 4. 执行 BFGS 优化
+    # logfile=None 可以直接在终端看到输出，或者保留 "opt.log"
     dyn = BFGS(atoms, logfile="opt.log")
     dyn.run(fmax=fmax, steps=steps)
 
@@ -310,12 +322,12 @@ def get_reference_structure(slab_ase):
     # 2. 几何优化
     # 注意：孤立原子的 optimize_structure 可能会因为没有受力而跳过
     print("--- 优化参考结构 H ---")
-    opt_h = optimize_structure(h_atom, device="cpu", fmax=0.05, steps=200)
+    opt_h = optimize_structure(h_atom, fmax=0.05, steps=200)
 
     print("--- 优化参考结构 H2O ---")
-    opt_h2o = optimize_structure(h2o_mol, device="cpu", fmax=0.05, steps=200)
+    opt_h2o = optimize_structure(h2o_mol, fmax=0.05, steps=200)
 
-    opt_f = optimize_structure(slab_ase, device="cpu", fmax=0.05, steps=200)
+    opt_f = optimize_structure(slab_ase, fmax=0.05, steps=200)
     # 3. 构建结果字典
     reference_dict = {
         "H": opt_h,
@@ -349,7 +361,10 @@ def process_extxyz_energies(filename):
         energy = atoms.get_potential_energy()
 
         # 获取化学式
-        formula = atoms.get_chemical_formula()
+        try:
+            formula = atoms.info['fragment_signature']
+        except:
+            formula = atoms.get_chemical_formula()
 
         # 累加能量并记录化学式
         step_data[step]['energy'] += energy
@@ -371,5 +386,72 @@ def process_extxyz_energies(filename):
         print(f"Step {s}: Energy = {total_e:.4f} eV, Formula = {combined_formula}")
 
     return final_energies, final_labels
+
+
+def compute_adsorption_energy(reactants, products):
+    """
+    计算吸附能：
+
+    E_ads = E_products - E_reactants
+
+    若仅差一个 H 原子，则自动使用 1/2 H2 进行补偿（需在reactants或products中包含H2能量）
+
+    Parameters
+    ----------
+    reactants : list of ase.Atoms
+    products  : list of ase.Atoms
+
+    Returns
+    -------
+    float : adsorption energy (eV)
+    """
+
+    def total_energy(atoms_list):
+        return sum(atoms.get_potential_energy() for atoms in atoms_list)
+
+    def count_elements(atoms_list):
+        counter = Counter()
+        for atoms in atoms_list:
+            counter.update(atoms.get_chemical_symbols())
+        return counter
+
+    # 能量
+    E_react = total_energy(reactants)
+    E_prod = total_energy(products)
+
+    # 元素统计
+    count_react = count_elements(reactants)
+    count_prod = count_elements(products)
+
+    diff = count_prod - count_react  # 正值表示产物多
+
+    # --------------------------
+    # 守恒检查
+    # --------------------------
+    if diff == Counter():
+        print("体系元素守恒。")
+        return E_prod - E_react
+
+    # 若仅差一个H
+    if set(diff.keys()) == {"H"} and abs(diff["H"]) == 1:
+        print("检测到仅差一个 H 原子，自动使用 1/2 H2 进行补偿。")
+
+        # 查找H2能量
+        H2_energy = None
+
+        if H2_energy is None:
+            raise ValueError("H2分子异常，无法进行1/2 H2补偿。")
+
+        correction = 0.5 * H2_energy
+
+        if diff["H"] == 1:
+            # 产物多一个H，相当于少了1/2 H2在反应物侧
+            return E_prod - (E_react + correction)
+        else:
+            # 产物少一个H
+            return (E_prod + correction) - E_react
+
+    raise ValueError(f"元素不守恒，差异为: {dict(diff)}")
+
 
 

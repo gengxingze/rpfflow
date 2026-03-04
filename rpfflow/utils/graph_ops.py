@@ -28,7 +28,7 @@ def split_graph(G: nx.Graph) -> List[nx.Graph]:
         List of subgraphs (deep copies).
     """
     subgraphs = [G.subgraph(c).copy() for c in nx.connected_components(G)]
-    print(f"[INFO] Graph split into {len(subgraphs)} connected components.")
+    # print(f"[INFO] Graph split into {len(subgraphs)} connected components.")
     return subgraphs
 
 
@@ -45,11 +45,11 @@ def merge_graphs(graphs: List[nx.Graph]) -> nx.Graph:
         Merged NetworkX graph.
     """
     G_merged = nx.disjoint_union_all(graphs)
-    print(
-        f"[INFO] Merged {len(graphs)} graphs | "
-        f"Nodes: {G_merged.number_of_nodes()} | "
-        f"Edges: {G_merged.number_of_edges()}"
-    )
+    # print(
+    #     f"[INFO] Merged {len(graphs)} graphs | "
+    #     f"Nodes: {G_merged.number_of_nodes()} | "
+    #     f"Edges: {G_merged.number_of_edges()}"
+    # )
     return G_merged
 
 

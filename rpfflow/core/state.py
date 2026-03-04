@@ -59,13 +59,19 @@ class RxnState:
         return count
 
     @cached_property
+    def signature(self):
+        """生成符号标签"""
+        signature = get_state_signature(self.graphs)
+        return signature
+
+    @cached_property
     def stable_structures(self):
         """
         根据当前的 graphs 生成对应的 ASE Atoms 对象列表
         """
         stru_ase = []
 
-        for g in self.graphs:
+        for i, g in enumerate(self.graphs):
             stru = nx_to_ase(g)
             formula = stru.get_chemical_formula()
 
@@ -104,9 +110,6 @@ class RxnState:
                 best_stru = min(choice_list, key=lambda s: s.get_potential_energy())
                 stru_ase.append(best_stru)
 
-
-        # 4. 在电催化台阶图中，我们通常需要的是能量列表来绘图，而不是求和
-        # 如果你确实需要总能量，可以使用 sum(energies)
         return stru_ase
     # =====================================================
     # 3. 状态演化工具
@@ -205,7 +208,7 @@ class SearchNode:
         history = self.reaction_history
         for entry in history:
             structures = entry["state"].stable_structures  # 这是一个 [Atoms, Atoms, ...] 列表
-
+            signature, _ = entry["state"].signature
             if not structures:
                 continue
 
@@ -229,7 +232,7 @@ class SearchNode:
                 temp_atoms.info['step'] = entry['step']
                 temp_atoms.info['action'] = entry['action']
                 temp_atoms.info['fragment_id'] = i  # 标记这是该步骤中的第几个碎片
-
+                temp_atoms.info['fragment_signature'] = signature[i]
                 path_frames.append(temp_atoms)
 
         # 4. 写入文件
@@ -237,7 +240,7 @@ class SearchNode:
         print(f"成功导出 {len(path_frames)} 个独立碎片结构至 {filename}")
 
 
-def get_state_signature(state: RxnState):
+def get_state_signature(graphs: Tuple[nx.Graph, ...]):
     """
     生成 RxnState 的唯一签名：
     - simple_smiles: 折叠氢原子后的紧凑格式，适合绘图标签 (例如 [CH4], [CH3OH])
@@ -247,7 +250,7 @@ def get_state_signature(state: RxnState):
     simple_list = []
     complex_list = []
 
-    for g in state.graphs:
+    for g in graphs:
         # 1. 基础转换 (此时含有 nx.Graph 中定义的独立 H 节点)
         mol = nx_to_rdkit(g)
 
@@ -289,7 +292,7 @@ def collect_paths_from_nodes(end_nodes: List[SearchNode]) -> List[List[str]]:
         path_signatures = []
         # 使用你定义的 iter_path() 回溯
         for step_node in node.iter_path():
-            signature = get_state_signature(step_node.state)
+            signature = get_state_signature(step_node.state.graphs)
             path_signatures.append(signature[0][0])
         all_paths.append(path_signatures)
     return all_paths

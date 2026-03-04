@@ -401,7 +401,7 @@ if __name__ == "__main__":
     # save_molecule_2d(mol, filename="../../graph_mm/test.png")
     #
     from rpfflow.core.structure import process_extxyz_energies
-    aa = process_extxyz_energies("../core/path_0.extxyz")
+    aa = process_extxyz_energies("../../path_0.extxyz")
     plot_energy_profile(aa[0], aa[1])
     print("✓ Visualization done.")
 
