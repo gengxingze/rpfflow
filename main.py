@@ -24,7 +24,7 @@ if __name__ == "__main__":
 
     # === 构建反应物 / 生成物 ===
     mol_react = create_mol('O=C(F)O')                 # CO2 (或简化占位)
-    mol_prod  = create_mol("C", add_h=True)     # CH3OH
+    mol_prod  = create_mol("CC", add_h=True)     # CH3OH
 
     G_react = rdkit_to_nx(mol_react)
     G_prod  = rdkit_to_nx(mol_prod)
@@ -41,16 +41,20 @@ if __name__ == "__main__":
     from rpfflow.core.model import bfs_search
 
     slab = read("tests/POSCAR")
-    G_react = RxnState(graphs=(G_react,), h_reserve=8, stage="[O]C(=O)F", reference_structure=get_reference_structure(slab))
+    G_react = RxnState(graphs=(G_react,G_react), h_reserve=15, stage="[O]C(=O)F", reference_structure=get_reference_structure(slab))
 
     # === 执行搜索 ===
-    node = bfs_search(G_react, G_prod, n_hydrogen=8)
+    node = bfs_search(G_react, G_prod, n_hydrogen=15)
     print(f"[OK] 找到 {len(node)} 步反应路径")
     paths = []
     # for x, n in enumerate(node):
     #     nnpp = n.reaction_history
     #     paths.append(nnpp)
     #     n.save_reaction_path(f"path_{x}.extxyz")
+
+    # nnpp = node[0].reaction_history
+    # paths.append(nnpp)
+    # node[0].save_reaction_path(f"path_.extxyz")
 
     from rpfflow.core.state import collect_paths_from_nodes, save_search_results, load_search_results
     save_search_results(paths)

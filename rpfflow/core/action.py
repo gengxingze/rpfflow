@@ -1,3 +1,5 @@
+import logging
+from itertools import combinations
 from copy import deepcopy
 from abc import ABC, abstractmethod
 from typing import Iterable, Tuple
@@ -7,6 +9,7 @@ from rpfflow.rules.basica import dissociate, associate
 from rpfflow.rules.matchs import is_isomorphic, is_duplicate
 from rpfflow.utils.graph_ops import split_graph, merge_graphs
 
+logger = logging.getLogger(__name__)
 
 molecules = create_common_molecules()
 OH_ = molecules["OH_"]
@@ -24,6 +27,36 @@ class ReactionAction(ABC):
         返回: Iterator[(新状态, 动作描述, 氢消耗)]
         """
         pass
+
+
+class AssociationAction(ReactionAction):
+    def apply(self, state: RxnState) -> Iterable[Tuple[RxnState, str, float]]:
+        for idx in state.carbon_indices:
+            graph = state.graphs[idx]
+            # 找所有有空价键的 C/N
+            active_nodes = [
+                n for n, d in graph.nodes(data=True)
+                if d.get("symbol") in {"C", "N"} and d.get("valence", 0) > 0
+            ]
+
+            if len(active_nodes) < 2:
+                continue
+
+            # 任意两两组合
+            for u, v in combinations(active_nodes, 2):
+                new_graph = deepcopy(graph)
+
+                # 尝试成键
+                bonded = associate(new_graph, u, v, bond_order=1.0)
+                if bonded is None:
+                    continue
+
+                # 更新状态
+                other_graphs = [g for i, g in enumerate(state.graphs) if i != idx]
+                new_graphs = other_graphs + [bonded]
+                if state:
+                    logger.error("Here  state is None")
+                yield state.derive(new_graphs=new_graphs, h_cost=0),f"associate", 0
 
 
 class DissociationAction(ReactionAction):
@@ -62,7 +95,7 @@ class DissociationAction(ReactionAction):
                         # 特殊逻辑 B: 如果是催化位点 F 参与的断裂（且氢量较低时允许）
                         elif state.h_reserve <= 2 and (
                                 graph.nodes[u]["symbol"] == "F" or graph.nodes[v]["symbol"] == "F"):
-                            print("split F")
+                            # print("split F")
                             final_frags = list(frags)
                             h_cost = 0.0
                     else:
@@ -88,7 +121,7 @@ class DissociationAction(ReactionAction):
         return split_graph(cut_g)
 
 
-
+# 酸性条件+H?
 class HydrogenationAction(ReactionAction):
     def apply(self, state: RxnState) -> Iterable[Tuple[RxnState, str, float]]:
         # H_molecule 通常是单原子 H 或 H* 的图表示
@@ -118,78 +151,144 @@ class HydrogenationAction(ReactionAction):
                                 bonded_graph.nodes[node]["create"] = False
 
                             # 4. 生成新状态，消耗 1 个氢
-                            new_graphs = [bonded_graph]
+                            other_graphs = [g for i, g in enumerate(state.graphs) if i != idx]
+                            new_graphs = [bonded_graph] + other_graphs
                             yield state.derive(new_graphs=new_graphs, h_cost=1), f"Add H at {n}", 1.0
-                            print(f"Add H at {n}")
+                            # print(f"Add H at {n}")
                         else:
-                            print("add_hydrogen error 1 !")
+                            logger.warning("add_hydrogen error 1 !")
                     else:
-                        print("add_hydrogen error 2 !")
+                        logger.warning("add_hydrogen error 2 !")
 
-class CCCouplingAction(ReactionAction):
+
+class CouplingAction(ReactionAction):
     def apply(self, state: RxnState) -> Iterable[Tuple[RxnState, str, float]]:
-        # 前置条件判断：尚未形成CC键、有两个含碳片段、脱附计数达到 2
-        if (not state.has_cc_bond) and \
-                (len(state.carbon_indices) == 2) and \
-                (state.desorption_count == 2):
+        # 前置条件判断：有超过两个C/N片段，尝试不同耦合
+        indices = state.element_indices({"C", "N"})
+        if len(indices) >= 2:
+            # 任意两个片段组合
+            for idx1, idx2 in combinations(indices, 2):
 
-            for i, idx in enumerate(state.carbon_indices):
-                graph = state.graphs[idx]
+                g1 = deepcopy(state.graphs[idx1])
+                g2 = deepcopy(state.graphs[idx2])
 
-                for n in graph.nodes:
-                    # 只有 C 原子参与偶联尝试
-                    if graph.nodes[n].get("symbol") == "C" and graph.nodes[n].get("valence", 0) > 0:
+                # 找可偶联原子
+                nodes1 = [n for n, d in g1.nodes(data=True) if d.get("symbol") in {"C", "N"} and d.get("valence", 0) > 0]
+                nodes2 = [n for n, d in g2.nodes(data=True) if d.get("symbol") in {"C", "N"} and d.get("valence", 0) > 0]
+                f1_node = [n for n, d in g1.nodes(data=True) if d.get("symbol") in {"F"}][0]
+                f2_node = [n for n, d in g2.nodes(data=True) if d.get("symbol") in {"F"}][0]
+                if not f1_node or not f2_node:
+                    continue
+                # 两条链都有空的价态
+                if bool(nodes1) and bool(nodes2):
+                    # 找到标记F
+                    g1.nodes[f1_node]["create"] = True
+                    g2.nodes[f2_node]["create"] = True
 
-                        # 定位另一个含碳片段及其 C、F 原子
-                        other_idx = state.carbon_indices[1 - i]
-                        other_graph = state.graphs[other_idx]
-
-                        # 查找另一个图中的 C 和 F 节点
-                        c_nodes = [m for m, d in other_graph.nodes(data=True) if d.get("symbol") == "C"]
-                        f_nodes = [f for f, d in other_graph.nodes(data=True) if d.get("symbol") == "F"]
-
-                        if not c_nodes or not f_nodes:
-                            continue
-
-                        m, f = c_nodes[0], f_nodes[0]
-
-                        # 如果另一个 C 未饱和，或当前通过 F 吸附，则尝试偶联
-                        if (other_graph.nodes[m].get("valence", 0) > 0) or other_graph.has_edge(m, f):
-                            g1, g2 = deepcopy(graph), deepcopy(other_graph)
-
-                            # 标记关键原子以便合并后 associate
-                            g1.nodes[n]["create"] = True  # 当前 C
-                            g2.nodes[m]["create"] = True  # 目标 C
-                            g2.nodes[f]["create"] = True  # 催化位点 F
-
-                            merged = merge_graphs([g1, g2])
-                            # 找到对应的两个 C 节点建立 C-C 键
-                            c_ids = [node for node, d in merged.nodes(data=True)
-                                     if d.get("symbol") == "C" and d.get("create", False)]
-
-                            if len(c_ids) == 2:
-                                coupled_g = associate(merged, c_ids[0], c_ids[1], bond_order=1.0)
-
-                                if coupled_g is not None:
-                                    # 建立 C-C 后，处理 F 脱附逻辑
-                                    f_node = [node for node, d in coupled_g.nodes(data=True)
-                                              if d.get("symbol") == "F" and d.get("create", False)][0]
-
-                                    # 找到 F 的邻居并断键 (脱附)
-                                    f_neighbors = list(coupled_g.neighbors(f_node))
-                                    if f_neighbors:
-                                        final_g = dissociate(coupled_g, f_node, f_neighbors[0])
-
-                                        # 清理标记并分裂碎片
-                                        for node in final_g.nodes:
-                                            final_g.nodes[node].pop("create", None)
-
-                                        final_fragments = split_graph(final_g)
-                                        yield state.derive(final_fragments), f"Add C-C at {n}", 0.0
+                # 一个链有空， 一个链没有空
+                if (bool(nodes1) and not bool(nodes2)) or (bool(nodes2) and not bool(nodes1)):
+                    # 对于没有空的链，断了F，释放出空位
+                    if not bool(nodes1):
+                        nodes1 = list(g1.neighbors(f1_node))
+                        g1.nodes[f1_node]["create"] = True
+                    else:
+                        nodes2 = list(g2.neighbors(f2_node))
+                        g2.nodes[f2_node]["create"] = True
 
 
+                # 尝试所有配对
+                for n in nodes1:
+                    for m in nodes2:
+                        g1_copy = deepcopy(g1)
+                        g2_copy = deepcopy(g2)
+                        g1_copy.nodes[n]["create"] = True
+                        g2_copy.nodes[m]["create"] = True
+                        frag = self._couple_fragments(g1_copy, g2_copy)
+                        f_node = [n for n, d in frag.nodes(data=True) if d.get("symbol") in {"F"} and d.get("create", False)]
+                        for ff in f_node:
+                            frag_copy = deepcopy(frag)
+                            n_f = list(frag_copy.neighbors(ff))[0]
+                            frag_copy = dissociate(frag_copy, n_f, ff)
+
+                            frag_copy = self._clean(frag_copy)
+                            frag_copy = split_graph(frag_copy)
+                            # yield 产出：新状态、动作描述、这一步的氢消耗
+                            logger.info(f"{state}")
+                            yield state.derive(new_graphs=frag_copy, h_cost=0), f"couplingAction", 0
+
+                # 两条链都没有空， 但是只有总的碳链只有两
+                if (not bool(nodes1)) and (not bool(nodes2)) and (len(indices) == 2) and state.h_reserve <= 2 :
+                    g1_copy = deepcopy(g1)
+                    g2_copy = deepcopy(g2)
+                    # 找到两条链中与F相连的{N,F}的节点号
+                    nodes1 = list(g1.neighbors(f1_node))
+                    g1_copy.nodes[nodes1[0]]["create"] = True
+                    g1_copy = dissociate(g1_copy, f1_node, nodes1[0])
+
+                    nodes2 = list(g2.neighbors(f2_node))
+                    g2_copy = dissociate(g2_copy, f2_node, nodes2[0])
+                    g2_copy.nodes[nodes2[0]]["create"] = True
+
+                    frag = self._couple_fragments(g1_copy, g2_copy)
+                    frag = self._clean(frag)
+                    logger.info(f"{state}")
+                    frag = split_graph(frag)
+                    yield state.derive(new_graphs=frag, h_cost=0), f"couplingAction", 0
 
 
+    @staticmethod
+    def _clean(graph):
+        """移除 create 标记"""
+        for node in graph.nodes:
+            graph.nodes[node].pop("create", None)
+        return graph
+
+    @staticmethod
+    def _couple_fragments(g1, g2):
+        merged = merge_graphs([g1, g2])
+        # 找到合并后的节点
+        couple_nodes = [node for node, d in merged.nodes(data=True) if d.get("create",False) and d.get("symbol") in {"C", "N"}]
+        coupled = associate( merged, couple_nodes[0],couple_nodes[1], bond_order=1.0, enforce=True)
+        return coupled
+
+
+if __name__ == "__main__":
+    """
+    回归测试：CO2 → CH3OH 反应路径搜索是否可正常运行
+    目标：
+    - 元素守恒检查通过
+    - BFS 能返回至少一条路径
+    - 路径中每一步都是 RxnState
+    """
+
+    from rpfflow.utils.convert import rdkit_to_nx
+    from rpfflow.core.structure import create_mol
+    from rpfflow.rules.basica import update_valence
+    from rpfflow.utils.visualizer import plot_molecular_graph, save_molecule_2d
+    # === 构建反应物 / 生成物 ===
+    mol_react = create_mol('[C](F)(O)O', add_h=True)                 # CO2 (或简化占位)
+    mol_prod  = create_mol("C", add_h=True)     # CH3OH
+
+    G_react = rdkit_to_nx(mol_react)
+    G_prod  = rdkit_to_nx(mol_prod)
+
+    update_valence(G_react)
+    update_valence(G_prod)
+
+
+    from ase.io import read
+    from rpfflow.core.structure import get_reference_structure, create_mol
+    slab = read("../../tests/POSCAR")
+    G = RxnState(graphs=(G_react,G_react), h_reserve=16, stage="[O]C(=O)F", reference_structure=get_reference_structure(slab))
+    action = CouplingAction()
+
+    results = list(action.apply(G))
+
+    plot_molecular_graph(G.graphs[0])
+
+    results_2 = list(AssociationAction().apply(G))
+    results_3 = list(HydrogenationAction().apply(G))
+    print(f"生成状态数: {len(results_2)}")
 
 
 

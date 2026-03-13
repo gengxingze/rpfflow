@@ -6,7 +6,7 @@ from functools import cached_property
 from dataclasses import dataclass, field, replace
 from typing import List, Optional, Iterator, Tuple
 from rpfflow.utils.convert import nx_to_ase, nx_to_rdkit
-from rpfflow.core.structure import rotate_F, optimize_structure, generate_adsorption_structures
+from rpfflow.core.structure import rotate_F, optimize_structure, generate_adsorption_structures, compute_adsorption_energy
 
 
 @dataclass(frozen=True)
@@ -33,11 +33,19 @@ class RxnState:
         return [i for i, g in enumerate(self.graphs)
                 if any(nx.get_node_attributes(g, "symbol").get(n) == "C" for n in g.nodes)]
 
+    def element_indices(self, elements=["C", "N"]):
+        return [
+            i for i, g in enumerate(self.graphs)
+            if any(s in elements for s in nx.get_node_attributes(g, "symbol").values())
+        ]
+
     @cached_property
-    def n_carbon(self) -> int:
-        """体系总碳数"""
-        return sum(len([n for n, s in nx.get_node_attributes(self.graphs[i], "symbol").items() if s == "C"])
-                   for i in self.carbon_indices)
+    def n_carbon(self):
+        return count_element(self.graphs, "C")
+
+    @cached_property
+    def n_nitrogen(self):
+        return count_element(self.graphs,"N")
 
     @cached_property
     def has_cc_bond(self) -> bool:
@@ -175,6 +183,14 @@ class SearchNode:
             curr = curr.parent
         yield from reversed(path)
 
+    @cached_property
+    def adsorption_energy(self) -> float | None:
+        if self.parent is None:
+            return None
+        energy = compute_adsorption_energy(reactants=self.parent.state.stable_structures,
+                                           products=self.state.stable_structures)
+        return energy
+
     @property
     def reaction_history(self) -> List[dict]:
         """
@@ -190,7 +206,9 @@ class SearchNode:
                 "action": "START" if is_root else node.action,
                 "h_cost": 0.0 if is_root else node.step_h_cost,
                 "total_h": node.cumulative_h_cost,
-                "state": node.state
+                "state": node.state,
+                "signature": get_state_signature(node.state.graphs),
+                "adsorption_energy": node.adsorption_energy
             })
         return history
     # =====================================================
@@ -311,4 +329,12 @@ def load_search_results(filename: str = "debug_paths.pkl"):
     with open(filename, "rb") as f:
         return pickle.load(f)
 
+
+def count_element(graphs, element: str) -> int:
+    return sum(
+        1
+        for g in graphs
+        for _, s in nx.get_node_attributes(g, "symbol").items()
+        if s == element
+    )
 

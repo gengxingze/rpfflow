@@ -437,7 +437,7 @@ def compute_adsorption_energy(reactants, products):
         print("检测到仅差一个 H 原子，自动使用 1/2 H2 进行补偿。")
 
         # 查找H2能量
-        H2_energy = None
+        H2_energy =  -6.859108
 
         if H2_energy is None:
             raise ValueError("H2分子异常，无法进行1/2 H2补偿。")
