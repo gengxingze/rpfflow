@@ -1,6 +1,10 @@
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass, field
+from typing import List, Optional, Iterable
+
+# 假设这些类已经定义好
 from rpfflow.core.action import HydrogenationAction, DissociationAction, CouplingAction, AssociationAction
 from rpfflow.core.state import RxnState, SearchNode
 from rpfflow.rules.matchs import is_duplicate
@@ -8,158 +12,82 @@ from rpfflow.rules.matchs import is_duplicate
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class SearchStats:
+    """负责存储和报告搜索统计数据"""
+    iteration: int = 0
+    generated: int = 0
+    pruned_h: int = 0
+    start_time: float = field(default_factory=time.time)
+    rule_metrics: dict = field(default_factory=dict)
+
+    def log_progress(self, queue_size: int, depth: int):
+        elapsed = time.time() - self.start_time
+        logger.info(
+            f"迭代:{self.iteration} | 队列:{queue_size} | 深度:{depth} | "
+            f"生成:{self.generated} | 剪枝(H):{self.pruned_h} | 耗时:{elapsed:.2f}s"
+        )
+
+    def report_final(self):
+        elapsed = time.time() - self.start_time
+        logger.info(f"\n搜索结束 - 总耗时:{elapsed:.2f}s\n{self}")
+        for name, m in self.rule_metrics.items():
+            logger.info(f"{name:20s} | calls={m['calls']} | gen={m['gen']} | err={m['err']}")
+
+
 def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, max_paths=100):
-
-    if rules is None:
-        rules = [HydrogenationAction(), DissociationAction(), CouplingAction(), AssociationAction()]
-
-    root_node = SearchNode(state=initial_state)
-    open_queue = deque([root_node])
+    # 1. 初始化配置
+    rules = rules or [HydrogenationAction(), DissociationAction(), CouplingAction(), AssociationAction()]
+    stats = SearchStats()
+    stats.rule_metrics = {type(r).__name__: {"calls": 0, "gen": 0, "err": 0} for r in rules}
 
     found_paths = []
-
-    iteration_count = 0
-    generated_states = 0
-    pruned_by_h = 0
-
-    start_time = time.time()
-
-    # --------------------------------
-    # rule 统计
-    # --------------------------------
-    rule_stats = {
-        type(rule).__name__: {
-            "calls": 0,
-            "generated": 0,
-            "none_state": 0,
-            "pruned_h": 0,
-            "exceptions": 0
-        }
-        for rule in rules
-    }
+    queue = deque([SearchNode(state=initial_state)])
 
     logger.info("BFS 搜索开始")
 
-    while open_queue:
+    # 2. 主循环
+    while queue and len(found_paths) < max_paths:
+        current_node = queue.popleft()
+        stats.iteration += 1
 
-        iteration_count += 1
-        current_node = open_queue.popleft()
-        state = current_node.state
-        queue_size = len(open_queue)
+        if stats.iteration % 2 == 0:  # 降低日志频率提高性能
+            stats.log_progress(len(queue), current_node.depth)
 
-        if iteration_count % 1 == 0:
-            elapsed = time.time() - start_time
-
-            logger.info(
-                f"迭代:{iteration_count} | "
-                f"队列:{len(open_queue)} | "
-                f"深度:{current_node.depth} | "
-                f"生成:{generated_states} | "
-                f"剪枝(H):{pruned_by_h} | "
-                f"耗时:{elapsed:.2f}s"
-            )
-
-        # -------------------------
         # 目标检测
-        # -------------------------
-        if is_duplicate(target_graph, state.graphs):
-
+        if is_duplicate(target_graph, current_node.state.graphs):
             found_paths.append(current_node)
-
-            logger.info(
-                f"找到路径 {len(found_paths)}/{max_paths} "
-                f"| depth={current_node.depth}"
-            )
-
-            if len(found_paths) >= max_paths:
-                break
-
+            logger.info(f"找到路径 {len(found_paths)}/{max_paths} | depth={current_node.depth}")
             continue
 
-        # -------------------------
-        # 规则应用
-        # -------------------------
+        # 扩展节点
         for rule in rules:
-
             rule_name = type(rule).__name__
-            rule_stats[rule_name]["calls"] += 1
+            stats.rule_metrics[rule_name]["calls"] += 1
 
             try:
+                for next_state, action_desc, h_cost in rule.apply(current_node.state):
+                    if next_state is None: continue
 
-                generated_by_rule = 0
-
-                for next_state, action_desc, h_cost in rule.apply(state):
-
-                    if next_state is None:
-                        rule_stats[rule_name]["none_state"] += 1
-                        logger.debug(f"{rule_name} 生成 None state")
-                        continue
-
+                    # 剪枝逻辑
                     total_h_cost = current_node.cumulative_h_cost + h_cost
-
                     if total_h_cost > n_hydrogen:
-                        pruned_by_h += 1
-                        rule_stats[rule_name]["pruned_h"] += 1
+                        stats.pruned_h += 1
                         continue
 
-                    generated_states += 1
-                    generated_by_rule += 1
-
+                    # 创建子节点
                     child_node = SearchNode(
-                        state=next_state,
-                        parent=current_node,
-                        action=action_desc,
-                        step_h_cost=h_cost
+                        state=next_state, parent=current_node,
+                        action=action_desc, step_h_cost=h_cost
                     )
-                    logger.info(f"{rule_name}  {child_node}")
 
-                    open_queue.append(child_node)
-
-                rule_stats[rule_name]["generated"] += generated_by_rule
-
-                # 如果 rule 完全没产生状态
-                if generated_by_rule == 0:
-                    logger.debug(f"{rule_name} 未产生新状态")
+                    queue.append(child_node)
+                    stats.generated += 1
+                    stats.rule_metrics[rule_name]["gen"] += 1
 
             except Exception as e:
+                stats.rule_metrics[rule_name]["err"] += 1
+                logger.error(f"Rule {rule_name} 异常: {e}", exc_info=True)
 
-                rule_stats[rule_name]["exceptions"] += 1
-
-                logger.error(
-                    f"Rule {rule_name} 执行异常: {e}",
-                    exc_info=True
-                )
-
-    # -------------------------
-    # 搜索结束
-    # -------------------------
-
-    elapsed = time.time() - start_time
-
-    logger.info(
-        f"\n搜索结束\n"
-        f"迭代:{iteration_count}\n"
-        f"生成状态:{generated_states}\n"
-        f"剪枝(H):{pruned_by_h}\n"
-        f"耗时:{elapsed:.2f}s"
-    )
-
-    # -------------------------
-    # Rule统计报告
-    # -------------------------
-
-    logger.info("Rule 统计:")
-
-    for rule, stat in rule_stats.items():
-
-        logger.info(
-            f"{rule:20s} | "
-            f"calls={stat['calls']} | "
-            f"gen={stat['generated']} | "
-            f"none={stat['none_state']} | "
-            f"pruneH={stat['pruned_h']} | "
-            f"err={stat['exceptions']}"
-        )
-
+    stats.report_final()
     return found_paths
-

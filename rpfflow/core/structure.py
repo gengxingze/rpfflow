@@ -1,4 +1,6 @@
 import logging
+import os
+import torch
 import numpy as np
 import networkx as nx
 from copy import deepcopy
@@ -8,6 +10,7 @@ from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import BFGS
 from ase.constraints import FixAtoms
+from ase.db import connect
 from collections import Counter
 from pymatgen.analysis.adsorption import AdsorbateSiteFinder
 from pymatgen.io.ase import AseAtomsAdaptor
@@ -196,38 +199,75 @@ def rotate_F(atoms: Atoms):
     return atoms
 
 
-def optimize_structure(atoms, model_size="small",
-                       fmax=0.05, steps=200, fix_mask=None):
-    """
-    对 atoms 对象执行结构优化，自动检测 GPU/CUDA 资源
 
-    - atoms: ASE Atoms 对象
-    - model_size: MACE 势模型大小 ('small', 'medium', 'large')
-    - fmax: 最大力阈值 (eV/Å)
-    - steps: 最大优化步数
-    - fix_mask: 用于固定部分原子的布尔列表 (可选)
+def optimize_structure(atoms, model_size="small", fmax=0.05, steps=200,
+                       fix_mask=None, db_path="calculations.db"):
     """
-    import torch
-    from mace.calculators import mace_mp
+    带有双重信息校验（Formula & Fragment Signature）的结构优化持久化函数
+    """
 
-    # 1. 自动检测设备
-    # 如果 CUDA 可用则使用 cuda，否则回退到 cpu
+    # 1. 提取双重校验信息
+    formula = atoms.get_chemical_formula()
+    # 使用 .get() 避免 Key 缺失导致报错
+    signature = atoms.info.get('fragment_signature', 'unknown')
+
+    # 2. 数据库查询：双重命中检测
+    if os.path.exists(db_path):
+        with connect(db_path) as db:
+            # 这里的 signature 以自定义 key 的形式存储在数据库的 data 或 key_value_pairs 中
+            # 我们根据 formula 缩小范围，再比对 signature
+            for row in db.select(formula=formula):
+                # row.key_value_pairs 会存储我们写入的自定义属性
+                db_signature = row.get('signature')
+
+                if db_signature == signature:
+                    # 如果受力要求也满足，则直接返回
+                    if row.get('fmax', 0.05) <= fmax:
+                        # logger.info(f"双重校验命中: {formula} [{signature}]")
+                        cached_atoms = row.toatoms()
+                        # 注意：从 DB 恢复后需重新绑定计算器，否则无法获取能量
+                        # 或者直接使用 row.energy
+                        return cached_atoms
+
+    # 3. 准备计算环境 (仅在未命中的情况下执行)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # print(f"正在使用设备: {device.upper()}")
 
-    # 2. 固定原子 (Constraints)
+    # 避免重复加载模型：如果 atoms 已经有合适的 calc，就不再初始化
+    if not hasattr(atoms, 'calc') or atoms.calc is None:
+        from mace.calculators import mace_mp
+        calc = mace_mp(model=model_size, device=device, default_dtype="float32")
+        atoms.calc = calc
+
     if fix_mask is not None:
         atoms.set_constraint(FixAtoms(mask=fix_mask))
 
-    # 3. 构造 MACE 势计算器
-    # 注意：这里使用了传入的 model_size 和 自动检测的 device
-    calc = mace_mp(model=model_size, device=device, default_dtype="float32")
-    atoms.calc = calc
-
-    # 4. 执行 BFGS 优化
-    # logfile=None 可以直接在终端看到输出，或者保留 "opt.log"
-    dyn = BFGS(atoms, logfile="opt.log")
+    # 4. 执行优化
+    # 使用 logfile=None 避免产生大量无用的 opt.log 文件
+    dyn = BFGS(atoms, logfile=None)
     dyn.run(fmax=fmax, steps=steps)
+
+    # -------- 5. 写入前校验（关键）--------
+    try:
+        energy = atoms.get_potential_energy()
+        forces = atoms.get_forces()
+        atoms.calc.results['forces'] = forces.astype(np.float64)
+        if forces.shape != (len(atoms), 3):
+            raise RuntimeError("Invalid forces shape")
+
+    except Exception as e:
+        # 不写入坏数据
+        print("Skip DB write due to invalid calculation:", e)
+        return atoms
+
+    # -------- 6. 防炸写入（核心）--------
+    with connect(db_path) as db:
+        db.write(
+            atoms,
+            signature=signature,
+            model=model_size
+        )
+
+        db.connection.commit()  # 强制写盘
 
     return atoms
 

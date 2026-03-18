@@ -1,5 +1,6 @@
 import time
 import pickle
+import logging
 import networkx as nx
 from ase import Atoms
 from functools import cached_property
@@ -7,6 +8,8 @@ from dataclasses import dataclass, field, replace
 from typing import List, Optional, Iterator, Tuple
 from rpfflow.utils.convert import nx_to_ase, nx_to_rdkit
 from rpfflow.core.structure import rotate_F, optimize_structure, generate_adsorption_structures, compute_adsorption_energy
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -21,7 +24,7 @@ class RxnState:
     h_reserve: int = 0
     stage: str = "adsorption"
     penalty: float = 0.0
-    reference_structure: dict[str, Atoms] = None
+    slab: Atoms = None
 
     # =====================================================
     # 2. 自动缓存的计算属性 (替代原来的 update() 方法)
@@ -75,50 +78,73 @@ class RxnState:
     @cached_property
     def stable_structures(self):
         """
-        根据当前的 graphs 生成对应的 ASE Atoms 对象列表
+        根据当前的 graphs 生成对应的 ASE Atoms 对象列表，支持持久化缓存校验
         """
         stru_ase = []
 
         for i, g in enumerate(self.graphs):
             stru = nx_to_ase(g)
             formula = stru.get_chemical_formula()
-
-            # 1. 检查是否为预设的孤立小分子
-            if formula in self.reference_structure:
-                stru_ase.append(self.reference_structure[formula])
-                continue
-
-            # 2. 如果结构中没有 F 原子 (通常是干净表面或已脱离表面的产物)
-            if 'F' not in stru.get_chemical_symbols():
-                opt_stru = optimize_structure(stru)
-                stru_ase.append(opt_stru)
-                continue
-
-            # 3. 如果含有 F 原子 (作为占位符或吸附指示)
-            # 且长度不为 1 (排除孤立 F 原子)
             symbols = stru.get_chemical_symbols()
-            if 'F' in symbols and len(stru) > 1:
-                # 旋转/调整含F的吸附质构型
-                stru = rotate_F(stru)
-                # 找到所有 F 原子的索引
-                f_indices = [atom.index for atom in stru if atom.symbol == 'F']
-                stru.pop(f_indices[0])
-                # 生成吸附结构
-                ads_structures_ase, _ = generate_adsorption_structures(
-                    adsorbate_ase=stru,
-                    slab_ase=self.reference_structure["F"]
-                )
+            current_signature = self.signature[0][i]  # 获取当前 fragment 的唯一签名
 
-                choice_list = []
-                for choice_stru in ads_structures_ase:
-                    # 这里的 ss 应该是吸附在 slab 上的完整体系
-                    opt_stru = optimize_structure(choice_stru)
-                    choice_list.append(opt_stru)
-                # 找到能量最低的结构对象
-                best_stru = min(choice_list, key=lambda s: s.get_potential_energy())
+            stru_candidates = []  # 统一存放待优化的候选结构
+
+            # 情况 A: 干净表面或气相分子（无 F 占位符）
+            if 'F' not in symbols:
+                stru_candidates = [stru]
+
+            # 情况 B: 孤立的 F 原子（代表干净的 Slab 表面）
+            elif 'F' in symbols and len(stru) == 1:
+                stru_candidates = [self.slab.copy()]
+
+            # 情况 C: 含 F 的吸附质（需要生成吸附位点）
+            elif 'F' in symbols and len(stru) > 1:
+                # 1. 处理吸附质构型：旋转并移除占位符 F
+                stru = rotate_F(stru)
+                f_indices = [atom.index for atom in stru if atom.symbol == 'F']
+                if f_indices:
+                    stru.pop(f_indices[0])
+
+                # 2. 生成所有可能的吸附构型 (Slab + Adsorbate)
+                ads_candidates, _ = generate_adsorption_structures(
+                    adsorbate_ase=stru,
+                    slab_ase=self.slab
+                )
+                stru_candidates = ads_candidates
+
+            else:
+                logger.error(f"无法识别的结构逻辑: {formula}")
+                continue
+
+            # --- 核心逻辑：注入签名并执行优化 ---
+            if not stru_candidates:
+                logger.warning(f"索引 {i} ({formula}) 未能生成任何候选结构")
+                continue
+
+            optimized_choices = []
+            for c in stru_candidates:
+                # 关键：在优化前注入签名，以便 optimize_structure 内部进行持久化对比
+                c.info['fragment_signature'] = current_signature
+
+                try:
+                    # 调用之前完善的带持久化的优化函数
+                    opt_s = optimize_structure(c)
+                    if opt_s is not None:
+                            optimized_choices.append(opt_s)
+                except Exception as e:
+                    logger.error(f"结构优化失败: {1+2}")
+
+            # 找出能量最低的亚稳态结构
+            if optimized_choices:
+                best_stru = min(optimized_choices, key=lambda s: s.get_potential_energy())
                 stru_ase.append(best_stru)
+            else:
+                logger.warning(f"索引 {i} 的所有候选结构优化均失败")
 
         return stru_ase
+
+
     # =====================================================
     # 3. 状态演化工具
     # =====================================================
@@ -310,7 +336,9 @@ def collect_paths_from_nodes(end_nodes: List[SearchNode]) -> List[List[str]]:
         path_signatures = []
         # 使用你定义的 iter_path() 回溯
         for step_node in node.iter_path():
-            signature = get_state_signature(step_node.state.graphs)
+            graphs = step_node.state.graphs
+            main_indices = step_node.state.element_indices()
+            signature = get_state_signature(tuple(map(graphs.__getitem__, main_indices)))
             path_signatures.append(signature[0][0])
         all_paths.append(path_signatures)
     return all_paths

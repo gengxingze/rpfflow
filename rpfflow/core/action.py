@@ -278,7 +278,7 @@ if __name__ == "__main__":
 
     from ase.io import read
     from rpfflow.core.structure import get_reference_structure, create_mol
-    slab = read("../../tests/POSCAR")
+    slab = read("../tests/POSCAR")
     G = RxnState(graphs=(G_react,G_react), h_reserve=16, stage="[O]C(=O)F", reference_structure=get_reference_structure(slab))
     action = CouplingAction()
 
