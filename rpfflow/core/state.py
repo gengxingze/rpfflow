@@ -164,7 +164,7 @@ class RxnState:
 
     def __repr__(self):
         return (f"<RxnState C={self.n_carbon} | H={self.h_reserve} | "
-                f"CC={self.has_cc_bond} | Stage={self.stage}>")
+                f"CC={self.has_cc_bond} | Signature={" + ".join(self.signature[0])}>")
 
 
 # =========================

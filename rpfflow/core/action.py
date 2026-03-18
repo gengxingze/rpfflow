@@ -165,9 +165,12 @@ class CouplingAction(ReactionAction):
     def apply(self, state: RxnState) -> Iterable[Tuple[RxnState, str, float]]:
         # 前置条件判断：有超过两个C/N片段，尝试不同耦合
         indices = state.element_indices({"C", "N"})
-        if len(indices) >= 2:
+        f_indices = state.element_indices({"F"})
+        # 取交集：只有既含 C/N 又含 F 的片段才能参与耦合
+        available_indices = list(indices.intersection(f_indices))
+        if len(available_indices) >= 2:
             # 任意两个片段组合
-            for idx1, idx2 in combinations(indices, 2):
+            for idx1, idx2 in combinations(available_indices, 2):
 
                 g1 = deepcopy(state.graphs[idx1])
                 g2 = deepcopy(state.graphs[idx2])
@@ -253,42 +256,79 @@ class CouplingAction(ReactionAction):
 
 
 if __name__ == "__main__":
-    """
-    回归测试：CO2 → CH3OH 反应路径搜索是否可正常运行
-    目标：
-    - 元素守恒检查通过
-    - BFS 能返回至少一条路径
-    - 路径中每一步都是 RxnState
-    """
+
+    import logging
+    from ase.io import read
 
     from rpfflow.utils.convert import rdkit_to_nx
     from rpfflow.core.structure import create_mol
     from rpfflow.rules.basica import update_valence
     from rpfflow.utils.visualizer import plot_molecular_graph, save_molecule_2d
-    # === 构建反应物 / 生成物 ===
-    mol_react = create_mol('[C](F)(O)O', add_h=True)                 # CO2 (或简化占位)
-    mol_prod  = create_mol("C", add_h=True)     # CH3OH
 
-    G_react = rdkit_to_nx(mol_react)
-    G_prod  = rdkit_to_nx(mol_prod)
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("ReactionActionTest")
 
-    update_valence(G_react)
-    update_valence(G_prod)
+    # =========================
+    # 1️⃣ 构建测试体系
+    # =========================
+    # [OH][C](F)[OH]   O=C(F)O
+    mol_1 = create_mol('O=C(F)O', add_h=True)
+    mol_2 = create_mol('O=C(F)O', add_h=True)
+    G_graph_1 = rdkit_to_nx(mol_1)
+    update_valence(G_graph_1)
+    G_graph_2 = rdkit_to_nx(mol_2)
+    update_valence(G_graph_2)
 
+    save_molecule_2d(mol_1, f"debug_mol_1.png")
+    save_molecule_2d(mol_2,  f"debug_mol_2.png")
 
-    from ase.io import read
-    from rpfflow.core.structure import get_reference_structure, create_mol
     slab = read("../tests/POSCAR")
-    G = RxnState(graphs=(G_react,G_react), h_reserve=16, stage="[O]C(=O)F", reference_structure=get_reference_structure(slab))
-    action = CouplingAction()
 
-    results = list(action.apply(G))
+    # 两个片段用于测试 coupling
+    state = RxnState(graphs=(G_graph_1, G_graph_2), h_reserve=16, stage="ROOT", slab=slab)
 
-    plot_molecular_graph(G.graphs[0])
+    print(f"Initial state built: {state}")
 
-    results_2 = list(AssociationAction().apply(G))
-    results_3 = list(HydrogenationAction().apply(G))
-    print(f"生成状态数: {len(results_2)}")
+    # =========================
+    # 2️⃣ 定义所有 action
+    # =========================
+    actions = {
+        "Association": AssociationAction(),
+        "Dissociation": DissociationAction(),
+        "Hydrogenation": HydrogenationAction(),
+        "Coupling": CouplingAction(),
+    }
 
+    # =========================
+    # 3️⃣ 执行 & 统计
+    # =========================
+    results_summary = {}
+
+    for name, action in actions.items():
+        print(f"\n=== Testing {name} ===")
+        try:
+            results = list(action.apply(state))
+        except Exception as e:
+            print(f"Error-> {name} crashed: {e}")
+            continue
+
+        print(f"{name} generated {len(results)} states")
+
+        # --- 基本正确性检查 ---
+        valid_count = 0
+        for i, (new_state, desc, h_cost) in enumerate(results):
+            # --- 可视化---
+            for j, g in enumerate(new_state.graphs):
+                try:
+                    pass
+                    # plot_molecular_graph(g,save_path=f"debug_{name}_{i}_{j}.png")
+                    save_molecule_2d(create_mol(new_state.signature[1][j]),  f"debug_{name}_{i}_{j}.png")
+
+                except Exception as e:
+                    print(f'picture error: {e}')
+            print(f'result {i}: {new_state}')
+        print( f"{name}: total={len(results)}")
+
+    print("\nDone ✅")
 
 

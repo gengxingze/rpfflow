@@ -23,7 +23,7 @@ if __name__ == "__main__":
     from rpfflow.rules.basica import update_valence
 
     # === 构建反应物 / 生成物 ===
-    mol_react = create_mol('O=C(F)O')                 # CO2 (或简化占位)
+    mol_react = create_mol('O=C(F)[O]')                 # CO2 (或简化占位)
     mol_prod  = create_mol("C", add_h=True)     # CH3OH
 
     G_react = rdkit_to_nx(mol_react)
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     from rpfflow.core.model import bfs_search
 
     slab = read("rpfflow/tests/POSCAR")
-    G_react = RxnState(graphs=(G_react,), h_reserve=8, stage="[O]C(=O)F", slab=slab)
+    G_react = RxnState(graphs=(G_react,G_prod), h_reserve=8, stage="[O]C(=O)F", slab=slab)
 
     # === 执行搜索 ===
     node = bfs_search(G_react, G_prod, n_hydrogen=8)
