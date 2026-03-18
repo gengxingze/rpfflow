@@ -25,7 +25,7 @@ class SearchStats:
         elapsed = time.time() - self.start_time
         logger.info(
             f"迭代:{self.iteration} | 队列:{queue_size} | 深度:{depth} | "
-            f"生成:{self.generated} | 剪枝(H):{self.pruned_h} | 耗时:{elapsed:.2f}s"
+            f"生成:{self.generated} | 剪枝(H):{self.pruned_h} | 耗时:{elapsed:.2f}s\n"
         )
 
     def report_final(self):
@@ -53,6 +53,7 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
 
         if stats.iteration % 2 == 0:  # 降低日志频率提高性能
             stats.log_progress(len(queue), current_node.depth)
+            logger.info(f"当前状态： {current_node}")
 
         # 目标检测
         if is_duplicate(target_graph, current_node.state.graphs):

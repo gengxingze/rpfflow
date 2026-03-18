@@ -164,8 +164,8 @@ class HydrogenationAction(ReactionAction):
 class CouplingAction(ReactionAction):
     def apply(self, state: RxnState) -> Iterable[Tuple[RxnState, str, float]]:
         # 前置条件判断：有超过两个C/N片段，尝试不同耦合
-        indices = state.element_indices({"C", "N"})
-        f_indices = state.element_indices({"F"})
+        indices = set(state.element_indices({"C", "N"}))
+        f_indices = set(state.element_indices({"F"}))
         # 取交集：只有既含 C/N 又含 F 的片段才能参与耦合
         available_indices = list(indices.intersection(f_indices))
         if len(available_indices) >= 2:
@@ -216,7 +216,6 @@ class CouplingAction(ReactionAction):
                             frag_copy = self._clean(frag_copy)
                             frag_copy = split_graph(frag_copy)
                             # yield 产出：新状态、动作描述、这一步的氢消耗
-                            logger.info(f"{state}")
                             yield state.derive(new_graphs=frag_copy, h_cost=0), f"couplingAction", 0
 
                 # 两条链都没有空， 但是只有总的碳链只有两
@@ -234,7 +233,6 @@ class CouplingAction(ReactionAction):
 
                     frag = self._couple_fragments(g1_copy, g2_copy)
                     frag = self._clean(frag)
-                    logger.info(f"{state}")
                     frag = split_graph(frag)
                     yield state.derive(new_graphs=frag, h_cost=0), f"couplingAction", 0
 
@@ -272,7 +270,7 @@ if __name__ == "__main__":
     # 1️⃣ 构建测试体系
     # =========================
     # [OH][C](F)[OH]   O=C(F)O
-    mol_1 = create_mol('O=C(F)O', add_h=True)
+    mol_1 = create_mol('[OH][C](F)[OH]', add_h=True)
     mol_2 = create_mol('O=C(F)O', add_h=True)
     G_graph_1 = rdkit_to_nx(mol_1)
     update_valence(G_graph_1)
@@ -285,7 +283,7 @@ if __name__ == "__main__":
     slab = read("../tests/POSCAR")
 
     # 两个片段用于测试 coupling
-    state = RxnState(graphs=(G_graph_1, G_graph_2), h_reserve=16, stage="ROOT", slab=slab)
+    state = RxnState(graphs=(G_graph_1, H2O), h_reserve=16, stage="ROOT", slab=slab)
 
     print(f"Initial state built: {state}")
 

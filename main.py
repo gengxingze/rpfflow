@@ -41,7 +41,7 @@ if __name__ == "__main__":
     from rpfflow.core.model import bfs_search
 
     slab = read("rpfflow/tests/POSCAR")
-    G_react = RxnState(graphs=(G_react,G_prod), h_reserve=8, stage="[O]C(=O)F", slab=slab)
+    G_react = RxnState(graphs=(G_react,), h_reserve=8, stage="[O]C(=O)F", slab=slab)
 
     # === 执行搜索 ===
     node = bfs_search(G_react, G_prod, n_hydrogen=8)
