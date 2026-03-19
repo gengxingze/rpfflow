@@ -54,9 +54,12 @@ class AssociationAction(ReactionAction):
                 # 更新状态
                 other_graphs = [g for i, g in enumerate(state.graphs) if i != idx]
                 new_graphs = other_graphs + [bonded]
-                if state:
-                    logger.error("Here  state is None")
-                yield state.derive(new_graphs=new_graphs, h_cost=0),f"associate", 0
+                main_frags = [
+                    g for g in new_graphs
+                    if any(d.get("symbol") in {"C", "N"} for _, d in g.nodes(data=True))
+                ]
+
+                yield state.derive(new_graphs=main_frags, h_cost=0),f"associate", 0
 
 
 class DissociationAction(ReactionAction):
@@ -68,7 +71,7 @@ class DissociationAction(ReactionAction):
             graph = state.graphs[idx]
 
             # 只有当该图所有原子价态饱和时，才尝试断键
-            if all(graph.nodes[n].get("valence", 0) <= 0 for n in graph.nodes):
+            if all(graph.nodes[n].get("valence", 0) <= 1 for n in graph.nodes):
 
                 for u, v in list(graph.edges()):
                     # 核心逻辑保护：如果是 C-C 键，通常不在此处断裂（可根据需要开启）
@@ -106,7 +109,13 @@ class DissociationAction(ReactionAction):
                     if final_frags:
                         # 保持除了当前正在操作的 idx 之外的其他子图不变
                         other_graphs = [g for i, g in enumerate(state.graphs) if i != idx]
-                        new_graphs = other_graphs + final_frags
+                        main_frags = [
+                            g for g in other_graphs
+                            if any(d.get("symbol") in {"C", "N"} for _, d in g.nodes(data=True))
+                        ]
+
+                        new_graphs = main_frags + final_frags
+                        # 更新状态
 
                         # yield 产出：新状态、动作描述、这一步的氢消耗
                         yield state.derive(new_graphs=new_graphs, h_cost=h_cost), f"dissociate: {u}-{v}", h_cost
@@ -152,7 +161,12 @@ class HydrogenationAction(ReactionAction):
 
                             # 4. 生成新状态，消耗 1 个氢
                             other_graphs = [g for i, g in enumerate(state.graphs) if i != idx]
-                            new_graphs = [bonded_graph] + other_graphs
+                            main_frags = [
+                                g for g in other_graphs
+                                if any(d.get("symbol") in {"C", "N"} for _, d in g.nodes(data=True))
+                            ]
+                            new_graphs = [bonded_graph] + main_frags
+
                             yield state.derive(new_graphs=new_graphs, h_cost=1), f"Add H at {n}", 1.0
                             # print(f"Add H at {n}")
                         else:
@@ -215,8 +229,13 @@ class CouplingAction(ReactionAction):
 
                             frag_copy = self._clean(frag_copy)
                             frag_copy = split_graph(frag_copy)
+
+                            # 👉 剩余未参与耦合的片段
+                            remaining_indices = indices - {idx1, idx2}
+                            other_graphs = [state.graphs[i] for i in remaining_indices]
+                            main_frag = frag_copy + other_graphs
                             # yield 产出：新状态、动作描述、这一步的氢消耗
-                            yield state.derive(new_graphs=frag_copy, h_cost=0), f"couplingAction", 0
+                            yield state.derive(new_graphs=main_frag, h_cost=0), f"couplingAction", 0
 
                 # 两条链都没有空， 但是只有总的碳链只有两
                 if (not bool(nodes1)) and (not bool(nodes2)) and (len(indices) == 2) and state.h_reserve <= 2 :
@@ -234,7 +253,12 @@ class CouplingAction(ReactionAction):
                     frag = self._couple_fragments(g1_copy, g2_copy)
                     frag = self._clean(frag)
                     frag = split_graph(frag)
-                    yield state.derive(new_graphs=frag, h_cost=0), f"couplingAction", 0
+                    # 👉 剩余未参与耦合的片段
+                    remaining_indices = indices - {idx1, idx2}
+                    other_graphs = [state.graphs[i] for i in remaining_indices]
+                    main_frag = frag + other_graphs
+
+                    yield state.derive(new_graphs=main_frag, h_cost=0), f"couplingAction", 0
 
 
     @staticmethod
@@ -269,9 +293,9 @@ if __name__ == "__main__":
     # =========================
     # 1️⃣ 构建测试体系
     # =========================
-    # [OH][C](F)[OH]   O=C(F)O
+    # [OH][C](F)[OH]   O=C(F)O [CH][F]
     mol_1 = create_mol('[OH][C](F)[OH]', add_h=True)
-    mol_2 = create_mol('O=C(F)O', add_h=True)
+    mol_2 = create_mol('[CH3][F]', add_h=True)
     G_graph_1 = rdkit_to_nx(mol_1)
     update_valence(G_graph_1)
     G_graph_2 = rdkit_to_nx(mol_2)
@@ -283,7 +307,7 @@ if __name__ == "__main__":
     slab = read("../tests/POSCAR")
 
     # 两个片段用于测试 coupling
-    state = RxnState(graphs=(G_graph_1, H2O), h_reserve=16, stage="ROOT", slab=slab)
+    state = RxnState(graphs=(G_graph_2, H2O), h_reserve=1, stage="ROOT", slab=slab)
 
     print(f"Initial state built: {state}")
 

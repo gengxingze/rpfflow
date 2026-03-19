@@ -22,9 +22,9 @@ if __name__ == "__main__":
     # from rpfflow.search import bfs_search
     from rpfflow.rules.basica import update_valence
 
-    # === 构建反应物 / 生成物 ===
-    mol_react = create_mol('O=C(F)[O]')                 # CO2 (或简化占位)
-    mol_prod  = create_mol("C", add_h=True)     # CH3OH
+    # === 构建反应物 / 生成物 === [CH3][CH]([OH])[F]  O=C(F)[O]
+    mol_react = create_mol('O=C(F)[O]', add_h=True)                 # CO2 (或简化占位)
+    mol_prod  = create_mol("FC(O)=CO", add_h=True)     # CH3OH
 
     G_react = rdkit_to_nx(mol_react)
     G_prod  = rdkit_to_nx(mol_prod)
@@ -41,10 +41,10 @@ if __name__ == "__main__":
     from rpfflow.core.model import bfs_search
 
     slab = read("rpfflow/tests/POSCAR")
-    G_react = RxnState(graphs=(G_react,), h_reserve=8, stage="[O]C(=O)F", slab=slab)
+    G_react = RxnState(graphs=(G_react,G_react), h_reserve=8, stage="[O]C(=O)F", slab=slab )
 
     # === 执行搜索 ===
-    node = bfs_search(G_react, G_prod, n_hydrogen=8)
+    node = bfs_search(G_react, G_prod, n_hydrogen=8 ,max_paths=2, max_depth=8)
     print(f"[OK] 找到 {len(node)} 步反应路径")
     paths = []
     # for x, n in enumerate(node):

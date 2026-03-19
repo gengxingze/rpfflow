@@ -336,10 +336,11 @@ def collect_paths_from_nodes(end_nodes: List[SearchNode]) -> List[List[str]]:
         path_signatures = []
         # 使用你定义的 iter_path() 回溯
         for step_node in node.iter_path():
-            graphs = step_node.state.graphs
+            # graphs = step_node.state.graphs
             main_indices = step_node.state.element_indices()
-            signature = get_state_signature(tuple(map(graphs.__getitem__, main_indices)))
-            path_signatures.append(signature[0][0])
+            signature = tuple(map(step_node.state.signature[0].__getitem__, main_indices))
+            signature = " + ".join(signature)
+            path_signatures.append(signature)
         all_paths.append(path_signatures)
     return all_paths
 

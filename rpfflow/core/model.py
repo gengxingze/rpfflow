@@ -35,7 +35,7 @@ class SearchStats:
             logger.info(f"{name:20s} | calls={m['calls']} | gen={m['gen']} | err={m['err']}")
 
 
-def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, max_paths=100):
+def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, max_paths=100, max_depth=5):
     # 1. 初始化配置
     rules = rules or [HydrogenationAction(), DissociationAction(), CouplingAction(), AssociationAction()]
     stats = SearchStats()
@@ -51,7 +51,7 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
         current_node = queue.popleft()
         stats.iteration += 1
 
-        if stats.iteration % 2 == 0:  # 降低日志频率提高性能
+        if stats.iteration % 1 == 0:  # 降低日志频率提高性能
             stats.log_progress(len(queue), current_node.depth)
             logger.info(f"当前状态： {current_node}")
 
@@ -59,6 +59,10 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
         if is_duplicate(target_graph, current_node.state.graphs):
             found_paths.append(current_node)
             logger.info(f"找到路径 {len(found_paths)}/{max_paths} | depth={current_node.depth}")
+            continue
+
+        # 利用深度进行剪枝
+        if current_node.depth > max_depth:
             continue
 
         # 扩展节点
