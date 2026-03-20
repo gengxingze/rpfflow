@@ -44,11 +44,11 @@ def main():
     slab = read(poscar_path)
 
     # 定义初始状态，设置 H 储备
-    initial_state = RxnState( graphs=(G_react_nx,), h_reserve=9,stage=smiles_react, slab=slab)
+    initial_state = RxnState(graphs=(G_react_nx,), h_cost=8,stage=smiles_react, slab=slab)
 
     # === 5. 执行 BFS 路径搜索 ===
     logger.info("Executing BFS search...")
-    result_nodes = bfs_search(initial_state, G_prod_nx, n_hydrogen=9, max_paths=5, max_depth=10)
+    result_nodes = bfs_search(initial_state, G_prod_nx, n_hydrogen=8, max_paths=100, max_depth=10)
 
     if not result_nodes:
         logger.error("No reaction path found.")
@@ -87,13 +87,13 @@ def main():
 if __name__ == "__main__":
     main()
     loaded_paths = load_search_results()
-    from rpfflow.utils.process import replace_slab
-    slab = read("rpfflow/tests/Ag.xyz")
-    pt_path = replace_slab(loaded_paths[0], slab)
-    pt_path.save_reaction_path("path_result_Ag.extxyz")
-
-    slab = read("rpfflow/tests/Pt.xyz")
-    pt_path = replace_slab(loaded_paths[0], slab)
-    pt_path.save_reaction_path("path_result_Pt.extxyz")
+    # from rpfflow.utils.process import replace_slab
+    # slab = read("rpfflow/tests/Ag.xyz")
+    # pt_path = replace_slab(loaded_paths[0], slab)
+    # pt_path.save_reaction_path("path_result_Ag.extxyz")
+    #
+    # slab = read("rpfflow/tests/Pt.xyz")
+    # pt_path = replace_slab(loaded_paths[0], slab)
+    # pt_path.save_reaction_path("path_result_Pt.extxyz")
 
     print("main.py end.")

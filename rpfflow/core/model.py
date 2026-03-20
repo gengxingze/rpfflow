@@ -61,9 +61,23 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
             logger.info(f"找到路径 {len(found_paths)}/{max_paths} | depth={current_node.depth}")
             continue
 
+        if len(found_paths) >= max_paths:
+            logger.info(f"已经发现设定路径 {len(found_paths)}/{max_paths} ，搜索结束")
+            break
+
         # 利用深度进行剪枝
         if current_node.depth > max_depth:
             continue
+
+        # 剪枝逻辑，仅对于多碳耦合反应
+        coupling = True
+        if coupling and current_node.state.h_cost < n_hydrogen - 2:
+            indices = set(current_node.state.element_indices({"C", "N"}))
+            f_indices = set(current_node.state.element_indices({"F"}))
+            # 取交集：只有既含 C/N 又含 F 的片段才能参与耦合
+            # available_indices = list(indices.intersection(f_indices))
+            if len(indices) != len(f_indices):
+                continue
 
         # 扩展节点
         for rule in rules:

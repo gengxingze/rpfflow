@@ -17,11 +17,11 @@ class RxnState:
     """
     rxnflow 核心状态类：
     - graphs: 体系中所有独立片段的元组 (保持顺序且不可变)
-    - h_reserve: 体系当前剩余可用的 H 原子/质子数
+    - h_cost: 体系当前花费的 H 原子/质子数
     - stage: 反应阶段 (adsorption, reduction, etc.)
     """
     graphs: Tuple[nx.Graph, ...]
-    h_reserve: int = 0
+    h_cost: int = 0
     stage: str = "adsorption"
     penalty: float = 0.0
     slab: Atoms = None
@@ -156,14 +156,14 @@ class RxnState:
         """
         updates = {
             "graphs": tuple(new_graphs),
-            "h_reserve": self.h_reserve - h_cost,
+            "h_cost":  h_cost,
             **kwargs
         }
         # replace 函数是 dataclasses 提供的克隆并更新的方法
         return replace(self, **updates)
 
     def __repr__(self):
-        return (f"<RxnState C={self.n_carbon} | H={self.h_reserve} | "
+        return (f"<RxnState C={self.n_carbon} | H={self.h_cost} | "
                 f"CC={self.has_cc_bond} | Signature={" + ".join(self.signature[0])}>")
 
 

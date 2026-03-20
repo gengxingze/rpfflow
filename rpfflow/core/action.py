@@ -70,10 +70,15 @@ class DissociationAction(ReactionAction):
         for idx in state.carbon_indices:
             graph = state.graphs[idx]
 
-            # 只有当该图所有原子价态饱和时，才尝试断键
-            if all(graph.nodes[n].get("valence", 0) <= 1 for n in graph.nodes):
+            # 价键自由度保护，避免产生高欠配位结构，检查节点中的C原子的get("valence", 0) <= 2， 否则跳过!
+            # !!!!!这里需要非常权衡，既不能丢失结构， 又不能允许过松的配位
+            if any(
+                    graph.nodes[n]["symbol"] == "C" and graph.nodes[n].get("valence", 0) >=2
+                    for n in graph.nodes
+            ):
+                continue
 
-                for u, v in list(graph.edges()):
+            for u, v in list(graph.edges()):
                     # 核心逻辑保护：如果是 C-C 键，通常不在此处断裂（可根据需要开启）
                     if graph.nodes[u]["symbol"] == "C" and graph.nodes[v]["symbol"] == "C":
                         continue
@@ -96,8 +101,7 @@ class DissociationAction(ReactionAction):
                             final_frags = frags
 
                         # 特殊逻辑 B: 如果是催化位点 F 参与的断裂（且氢量较低时允许）
-                        elif state.h_reserve <= 2 and (
-                                graph.nodes[u]["symbol"] == "F" or graph.nodes[v]["symbol"] == "F"):
+                        elif graph.nodes[u]["symbol"] == "F" or graph.nodes[v]["symbol"] == "F":
                             # print("split F")
                             final_frags = list(frags)
                             h_cost = 0.0
@@ -115,7 +119,6 @@ class DissociationAction(ReactionAction):
                         ]
 
                         new_graphs = main_frags + final_frags
-                        # 更新状态
 
                         # yield 产出：新状态、动作描述、这一步的氢消耗
                         yield state.derive(new_graphs=new_graphs, h_cost=h_cost), f"dissociate: {u}-{v}", h_cost
