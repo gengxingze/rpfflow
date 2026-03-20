@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 from rdkit import Chem
 from rdkit.Chem import Draw
 
+plt.rcParams.update({'font.size': 18, 'font.family': 'serif', 'font.serif': ['Times New Roman']})
+plt.rcParams['mathtext.default'] = 'regular'
 
 # ============================================================
 # Visualization configuration
@@ -297,6 +299,7 @@ def plot_reaction_tree(paths, direction='LR'):
             arrowsize=25,
             font_weight='bold',
             font_color='black',
+            font_family="Times New Roman",
             font_size=11,  # 稍微缩小字体以适应长 SMILES
             edge_color='#90A4AE',
             width=2.0,
@@ -310,70 +313,84 @@ def plot_reaction_tree(paths, direction='LR'):
     plt.show()
 
 
-def plot_energy_profile(energy_list, labels, title="Reaction Energy Profile", colors=None):
+def plot_energy_profile(energy_list, smiles, title="Reaction Energy Profile",
+                        colors=None, file_name="EnergyProfile_Professional_pt.png", label=None):
     """
-    绘制不带过渡态的反应能量图
-
-    :param energy_list: 能量列表。如果是多组对比，请传入列表的列表，如 [[0, -0.5, 0.2], [0, -0.8, 0.1]]
-    :param labels: 对应每个台阶的化学式标签列表
-    :param title: 图表标题
-    :param colors: 颜色列表，用于区分不同组数据
+    美化版反应能量图绘制函数
     """
-    import matplotlib
-    matplotlib.use('TkAgg')
-    # 统一处理数据格式：确保 energy_list 是嵌套列表
-    if not isinstance(energy_list[0], (list, np.ndarray)):
+    # 统一处理数据格式
+    if not isinstance(energy_list[0], (list, np.ndarray, tuple)):
         energy_list = [energy_list]
 
+    # 2. 配色方案：使用更高级的调色盘
     if colors is None:
-        colors = ['black', '#1f77b4', '#ff7f0e', '#2ca02c']
+        # 典型的科研配色：深蓝、深红、翠绿、紫罗兰
+        colors = ['#08519c', '#a50f15', '#006d2c', '#54278f']
 
     # 绘图参数
     step_width = 0.6  # 平台宽度
     gap = 0.4  # 平台间距
 
-    plt.figure(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
 
-    # 遍历每一组能量数据
     for group_idx, energies in enumerate(energy_list):
         color = colors[group_idx % len(colors)]
-        x_start = 0
 
         for i in range(len(energies)):
-            x_range = [x_start, x_start + step_width]
+            x_start = i * (step_width + gap)
+            x_end = x_start + step_width
+            curr_e = energies[i]
 
-            # 1. 绘制水平能级
-            plt.hlines(energies[i], x_range[0], x_range[1], color=color, lw=2.5,
-                       label=f"Group {group_idx + 1}" if i == 0 else "")
+            # 3. 绘制水平能级 (添加了轻微的阴影效果或加粗)
+            # --- 关键修改：只在 i == 0 时传入 label ---
+            if i == 0:
+                ax.hlines(curr_e, x_start, x_end, color=color, lw=3.5, zorder=3, label=label[group_idx] if label else None)
+            else:
+                ax.hlines(curr_e, x_start, x_end, color=color, lw=3.5, zorder=3)
 
-            # 2. 仅在第一组数据上标注标签（避免重复）
+
+            # 4. 绘制数值标注 (在能级上方显示具体的 ΔE)
+            # 只在非零值上标注，或者全部标注
+            ax.text((x_start + x_end) / 2, curr_e + 0.05, f"{curr_e:.2f}",
+                    ha='center', va='bottom', color=color, fontsize=9, fontweight='bold')
+
+            # 5. 标注化学式标签 (优化了位置和旋转角度)
             if group_idx == 0:
-                plt.text(x_start + step_width / 2, min(energies) - 0.3, labels[i],
-                         ha='center', va='top', fontsize=10, fontweight='bold', rotation=15)
+                # 寻找所有组在该步骤的最低能量，避免标签重叠
+                all_step_energies = [g[i] for g in energy_list if i < len(g)]
+                min_e = min(all_step_energies)
+                ax.text((x_start + x_end) / 2, min_e - 0.15, smiles[i],
+                        ha='center', va='top', fontsize=8, fontweight='regular', style='italic')
 
-            # 3. 绘制连接虚线
+            # 6. 绘制连接线：改用更平滑的虚线或细实线
             if i > 0:
-                prev_x_end = x_start - gap
-                plt.plot([prev_x_end, x_start], [energies[i - 1], energies[i]],
-                         color=color, linestyle=':', lw=1.5, alpha=0.7)
+                prev_x_end = (i - 1) * (step_width + gap) + step_width
+                prev_e = energies[i - 1]
+                ax.plot([prev_x_end, x_start], [prev_e, curr_e],
+                        color=color, linestyle='--', lw=1.2, alpha=0.6, zorder=2)
 
-            x_start += (step_width + gap)
+    # 7. 细节修饰
+    ax.axhline(0, color='#636363', lw=1, ls='-', alpha=0.3, zorder=1)  # 零能级参考线
 
-    # 图表修饰
-    plt.axhline(0, color='gray', lw=0.8, ls='--')  # 零能级参考线
-    plt.ylabel('$\Delta E$ (eV)', fontsize=12)
-    plt.xlabel('Reaction Coordinate', fontsize=12)
-    plt.title(title, fontsize=14)
-    plt.xticks([])
 
-    # 如果有多组数据，显示图例
-    if len(energy_list) > 1:
-        plt.legend()
+    # 坐标轴标签
+    ax.set_ylabel('$\Delta G$ or $\Delta E$ (eV)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Reaction Coordinate', fontsize=14, fontweight='bold')
+    ax.set_title(title, fontsize=16, pad=20)
 
-    # plt.tight_layout()
-    plt.savefig("ReactionCoordinate.png", dpi=300)
+    # 隐藏X轴刻度
+    ax.set_xticks([])
+
+    # 设置Y轴网格线（可选）
+    ax.grid(axis='y', linestyle=':', alpha=0.4)
+
+    # 只要调用 legend() 即可，Matplotlib 会自动匹配颜色
+    if label is not None:
+        ax.legend(frameon=False, loc='best', fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig(file_name,dpi=300)
     plt.show()
-
 
 # ============================================================
 # Example
@@ -401,8 +418,10 @@ if __name__ == "__main__":
     # save_molecule_2d(mol, filename="../../graph_mm/test.png")
     #
     from rpfflow.core.structure import process_extxyz_energies
-    aa = process_extxyz_energies("../../path_0.extxyz")
-    plot_energy_profile(aa[0], aa[1])
+    aa = process_extxyz_energies("../../path_result_pt.extxyz")
+    bb = process_extxyz_energies("../../path_result_Ag.extxyz")
+    cc = process_extxyz_energies("../../path_0.extxyz")
+    plot_energy_profile([aa[2], bb[2], cc[2]], smiles=aa[1], label=["Pt", "Ag", "Cu"])
     print("✓ Visualization done.")
 
 

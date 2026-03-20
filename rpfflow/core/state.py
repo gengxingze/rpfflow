@@ -213,7 +213,9 @@ class SearchNode:
     def adsorption_energy(self) -> float | None:
         if self.parent is None:
             return None
-        energy = compute_adsorption_energy(reactants=self.parent.state.stable_structures,
+        main_indices = self.parent.state.element_indices()
+        reactants = list(map(self.parent.state.stable_structures.__getitem__, main_indices))
+        energy = compute_adsorption_energy(reactants=reactants,
                                            products=self.state.stable_structures)
         return energy
 

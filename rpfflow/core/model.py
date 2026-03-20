@@ -35,7 +35,7 @@ class SearchStats:
             logger.info(f"{name:20s} | calls={m['calls']} | gen={m['gen']} | err={m['err']}")
 
 
-def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, max_paths=100, max_depth=5):
+def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, max_paths=10, max_depth=5):
     # 1. 初始化配置
     rules = rules or [HydrogenationAction(), DissociationAction(), CouplingAction(), AssociationAction()]
     stats = SearchStats()

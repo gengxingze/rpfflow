@@ -378,54 +378,86 @@ def get_reference_structure(slab_ase):
     return reference_dict
 
 
-def process_extxyz_energies(filename):
+def process_extxyz_energies(filename, h_energy=-3.4):
     """
     读取extxyz，按step合并能量并拼接化学式
+    并计算吸附能：
+    E_ads = E_all(step) - E_CN(prev_step) - n_H * E_H
     """
     from collections import defaultdict
     from ase.io import read
-    # 用于存储数据：{step: {'energy': total_energy, 'formulas': [formula1, formula2, ...]}}
-    step_data = defaultdict(lambda: {'energy': 0.0, 'formulas': []})
 
-    # 1. 加载所有结构
-    # index=':' 表示读取文件中所有的构型
+    step_data = defaultdict(lambda: {
+        'energy': 0.0,
+        'formulas': [],
+        'atoms_list': []
+    })
+
     configs = read(filename, index=':')
 
+    # -------------------------
+    # 1. 收集数据
+    # -------------------------
     for atoms in configs:
-        # 获取当前构型的 step (从 atoms.info 字典中读取)
-        # 如果 atoms.info 中没有 'step'，则默认为 0
         step = atoms.info.get('step', 0)
-
-        # 获取能量 (假设能量存储在 atoms.info['energy'])
-        # 如果 extxyz 里没有能量字段，可能需要 atoms.get_potential_energy()
         energy = atoms.get_potential_energy()
 
-        # 获取化学式
         try:
             formula = atoms.info['fragment_signature']
         except:
             formula = atoms.get_chemical_formula()
 
-        # 累加能量并记录化学式
         step_data[step]['energy'] += energy
         step_data[step]['formulas'].append(formula)
+        step_data[step]['atoms_list'].append(atoms)
 
-    # 2. 整理输出
+    # -------------------------
+    # 2. 工具函数
+    # -------------------------
+    def is_has_cn(atoms):
+        """判断是否只包含 C/N"""
+        return bool(set(atoms.get_chemical_symbols()) & {"C", "N"})
+
+    def count_H(atoms):
+        """统计 H 原子数"""
+        return atoms.get_chemical_symbols().count("H")
+
+    # -------------------------
+    # 3. 计算结果
+    # -------------------------
     sorted_steps = sorted(step_data.keys())
     final_energies = []
     final_labels = []
+    adsorption_energies = []
 
-    for s in sorted_steps:
-        total_e = step_data[s]['energy']
-        # 将化学式用 '+' 连接
+    for i, s in enumerate(sorted_steps):
+        total_energy = step_data[s]['energy']
         combined_formula = " + ".join(step_data[s]['formulas'])
 
-        final_energies.append(total_e)
+        final_energies.append(total_energy)
         final_labels.append(combined_formula)
 
-        print(f"Step {s}: Energy = {total_e:.4f} eV, Formula = {combined_formula}")
+        # -------------------------
+        # 计算吸附能
+        # -------------------------
+        if i == 0:
+            adsorption_energies.append(0)
+        else:
+            reactions_step = sorted_steps[i - 1]
+            reactions = []
 
-    return final_energies, final_labels
+            products_n_h = 0
+            for atoms in step_data[reactions_step]['atoms_list']:
+                if is_has_cn(atoms):
+                    reactions.append(atoms)
+
+            adsorption_energies.append(compute_adsorption_energy(reactions, step_data[s]['atoms_list']))
+
+        print(f"Step {s}: Energy = {total_energy:.4f} eV, Formula = {combined_formula}")
+        if adsorption_energies[-1] is not None:
+            print(f"          Adsorption Energy = {adsorption_energies[-1]:.4f} eV")
+
+    return final_energies, final_labels, adsorption_energies
 
 
 def compute_adsorption_energy(reactants, products):
