@@ -19,7 +19,7 @@ def main():
     # === 2. 构建反应物与产物图结构 ===
     # 示例：使用 [O]C(=O)F 作为起始状态，C (Methane) 或 CH3OH 作为目标
     smiles_react = 'O=C(F)[O]'
-    smiles_prod = 'C'
+    smiles_prod = 'C[OH]'
 
     mol_react = create_mol(smiles_react, add_h=True)
     mol_prod = create_mol(smiles_prod, add_h=True)
@@ -59,7 +59,9 @@ def main():
     # === 6. 路径收集与保存 ===
     # 提取完整路径（从起始到终点）
     all_paths = collect_paths_from_nodes(result_nodes)
-
+    unique_paths = list(set(tuple(p) for p in all_paths))
+    unique_paths = [list(p) for p in unique_paths]
+    logger.info(f"[OK] Found really unique {len(unique_paths)} reaction paths.")
     # 保存第一个找到的路径为轨迹文件 (extxyz)
     result_nodes[0].save_reaction_path("path_result_Cu.extxyz")
 
@@ -86,7 +88,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-    loaded_paths = load_search_results()
+    # loaded_paths = load_search_results()
     # from rpfflow.utils.process import replace_slab
     # slab = read("rpfflow/tests/Ag.xyz")
     # pt_path = replace_slab(loaded_paths[0], slab)

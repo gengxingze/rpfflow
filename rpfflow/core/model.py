@@ -45,9 +45,11 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
     queue = deque([SearchNode(state=initial_state)])
 
     logger.info("BFS 搜索开始")
+    visited_set = set()
+    _MAX_VISITED = 20
 
     # 2. 主循环
-    while queue and len(found_paths) < max_paths:
+    while queue:
         current_node = queue.popleft()
         stats.iteration += 1
 
@@ -65,6 +67,17 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
             logger.info(f"已经发现设定路径 {len(found_paths)}/{max_paths} ，搜索结束")
             break
 
+        # 剪枝逻辑， 重复路径剪枝
+        if current_node.path_signature_tuple in visited_set:
+            continue
+        else:
+            visited_set.add(current_node.path_signature_tuple)
+
+        if len(visited_set) > max_depth:
+            visited_set.clear()
+            continue
+
+
         # 利用深度进行剪枝
         if current_node.depth > max_depth:
             continue
@@ -78,6 +91,7 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
             # available_indices = list(indices.intersection(f_indices))
             if len(indices) != len(f_indices):
                 continue
+
 
         # 扩展节点
         for rule in rules:
@@ -99,6 +113,10 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
                         state=next_state, parent=current_node,
                         action=action_desc, step_h_cost=h_cost
                     )
+
+                    # 剪枝逻辑， 是否回环 A-B-C-B
+                    # if current_node.step_signature in current_node.path_signature_tuple:
+                    #     continue
 
                     queue.append(child_node)
                     stats.generated += 1

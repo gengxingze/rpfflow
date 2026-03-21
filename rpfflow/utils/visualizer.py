@@ -420,7 +420,7 @@ if __name__ == "__main__":
     from rpfflow.core.structure import process_extxyz_energies
     aa = process_extxyz_energies("../../path_result_pt.extxyz")
     bb = process_extxyz_energies("../../path_result_Ag.extxyz")
-    cc = process_extxyz_energies("../../path_0.extxyz")
+    cc = process_extxyz_energies("../../path_result_Cu.extxyz")
     plot_energy_profile([aa[2], bb[2], cc[2]], smiles=aa[1], label=["Pt", "Ag", "Cu"])
     print("✓ Visualization done.")
 

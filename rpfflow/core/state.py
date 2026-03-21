@@ -239,6 +239,23 @@ class SearchNode:
                 "adsorption_energy": node.adsorption_energy
             })
         return history
+
+    @cached_property
+    def step_signature(self) -> str:
+        """
+        当前节点的 signature（单步）
+        """
+        main_indices = self.state.element_indices()
+        signature = sorted(self.state.signature[0][i] for i in main_indices)
+        return " + ".join(signature)
+
+    @cached_property
+    def path_signature_tuple(self):
+        if self.parent is None:
+            return (self.step_signature,)
+        return self.parent.path_signature_tuple + (self.step_signature,)
+
+
     # =====================================================
     # 辅助工具
     # =====================================================
@@ -286,6 +303,17 @@ class SearchNode:
         print(f"成功导出 {len(path_frames)} 个独立碎片结构至 {filename}")
 
 
+def collect_paths_from_nodes(end_nodes: List[SearchNode]) -> List[List[str]]:
+    """
+    将搜索到的终点节点列表转化为绘图所需的签名路径列表。
+    """
+    all_paths = []
+    for node in end_nodes:
+        all_paths.append(node.path_signature_tuple)
+    return all_paths
+
+
+
 def get_state_signature(graphs: Tuple[nx.Graph, ...]):
     """
     生成 RxnState 的唯一签名：
@@ -327,26 +355,6 @@ def get_state_signature(graphs: Tuple[nx.Graph, ...]):
     # final_complex = " . ".join(sorted(complex_list))
 
     return simple_list, complex_list
-
-
-def collect_paths_from_nodes(end_nodes: List[SearchNode]) -> List[List[str]]:
-    """
-    将搜索到的终点节点列表转化为绘图所需的签名路径列表。
-    """
-    all_paths = []
-    for node in end_nodes:
-        path_signatures = []
-        # 使用你定义的 iter_path() 回溯
-        for step_node in node.iter_path():
-            # graphs = step_node.state.graphs
-            main_indices = step_node.state.element_indices()
-            signature = tuple(map(step_node.state.signature[0].__getitem__, main_indices))
-            signature = " + ".join(signature)
-            path_signatures.append(signature)
-        all_paths.append(path_signatures)
-    return all_paths
-
-
 
 
 def save_search_results(found_paths: list, filename: str = "debug_paths.pkl"):

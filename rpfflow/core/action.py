@@ -241,7 +241,7 @@ class CouplingAction(ReactionAction):
                             yield state.derive(new_graphs=main_frag, h_cost=0), f"couplingAction", 0
 
                 # 两条链都没有空， 但是只有总的碳链只有两
-                if (not bool(nodes1)) and (not bool(nodes2)) and (len(indices) == 2) and state.h_reserve <= 2 :
+                if (not bool(nodes1)) and (not bool(nodes2)) and (len(indices) == 2):
                     g1_copy = deepcopy(g1)
                     g2_copy = deepcopy(g2)
                     # 找到两条链中与F相连的{N,F}的节点号
