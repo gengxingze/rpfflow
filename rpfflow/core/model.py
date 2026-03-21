@@ -73,7 +73,7 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
         else:
             visited_set.add(current_node.path_signature_tuple)
 
-        if len(visited_set) > max_depth:
+        if len(visited_set) > _MAX_VISITED:
             visited_set.clear()
             continue
 
@@ -82,14 +82,15 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
         if current_node.depth > max_depth:
             continue
 
-        # 剪枝逻辑，仅对于多碳耦合反应
+        # 剪枝逻辑，对于多碳耦合反应
         coupling = True
-        if coupling and current_node.state.h_cost < n_hydrogen - 2:
+        if coupling and current_node.cumulative_h_cost < n_hydrogen - 1:
             indices = set(current_node.state.element_indices({"C", "N"}))
             f_indices = set(current_node.state.element_indices({"F"}))
             # 取交集：只有既含 C/N 又含 F 的片段才能参与耦合
             # available_indices = list(indices.intersection(f_indices))
-            if len(indices) != len(f_indices):
+            # 需谨慎
+            if not indices & f_indices:  # C/F 已不在一起
                 continue
 
 

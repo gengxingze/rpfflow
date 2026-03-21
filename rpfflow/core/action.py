@@ -59,7 +59,7 @@ class AssociationAction(ReactionAction):
                     if any(d.get("symbol") in {"C", "N"} for _, d in g.nodes(data=True))
                 ]
 
-                yield state.derive(new_graphs=main_frags, h_cost=0),f"associate", 0
+                yield state.derive(new_graphs=main_frags),f"associate", 0
 
 
 class DissociationAction(ReactionAction):
@@ -121,7 +121,7 @@ class DissociationAction(ReactionAction):
                         new_graphs = main_frags + final_frags
 
                         # yield 产出：新状态、动作描述、这一步的氢消耗
-                        yield state.derive(new_graphs=new_graphs, h_cost=h_cost), f"dissociate: {u}-{v}", h_cost
+                        yield state.derive(new_graphs=new_graphs), f"dissociate: {u}-{v}", h_cost
 
 
     @staticmethod
@@ -170,7 +170,7 @@ class HydrogenationAction(ReactionAction):
                             ]
                             new_graphs = [bonded_graph] + main_frags
 
-                            yield state.derive(new_graphs=new_graphs, h_cost=1), f"Add H at {n}", 1.0
+                            yield state.derive(new_graphs=new_graphs), f"Add H at {n}", 1.0
                             # print(f"Add H at {n}")
                         else:
                             logger.warning("add_hydrogen error 1 !")
@@ -238,7 +238,7 @@ class CouplingAction(ReactionAction):
                             other_graphs = [state.graphs[i] for i in remaining_indices]
                             main_frag = frag_copy + other_graphs
                             # yield 产出：新状态、动作描述、这一步的氢消耗
-                            yield state.derive(new_graphs=main_frag, h_cost=0), f"couplingAction", 0
+                            yield state.derive(new_graphs=main_frag), f"couplingAction", 0
 
                 # 两条链都没有空， 但是只有总的碳链只有两
                 if (not bool(nodes1)) and (not bool(nodes2)) and (len(indices) == 2):
@@ -261,7 +261,7 @@ class CouplingAction(ReactionAction):
                     other_graphs = [state.graphs[i] for i in remaining_indices]
                     main_frag = frag + other_graphs
 
-                    yield state.derive(new_graphs=main_frag, h_cost=0), f"couplingAction", 0
+                    yield state.derive(new_graphs=main_frag), f"couplingAction", 0
 
 
     @staticmethod
@@ -310,7 +310,7 @@ if __name__ == "__main__":
     slab = read("../tests/POSCAR")
 
     # 两个片段用于测试 coupling
-    state = RxnState(graphs=(G_graph_2, H2O), h_reserve=1, stage="ROOT", slab=slab)
+    state = RxnState(graphs=(G_graph_2, H2O),stage="ROOT", slab=slab)
 
     print(f"Initial state built: {state}")
 
@@ -331,11 +331,11 @@ if __name__ == "__main__":
 
     for name, action in actions.items():
         print(f"\n=== Testing {name} ===")
-        try:
-            results = list(action.apply(state))
-        except Exception as e:
-            print(f"Error-> {name} crashed: {e}")
-            continue
+        # try:
+        results = list(action.apply(state))
+        # except Exception as e:
+        #     print(f"Error-> {name} crashed: {e}")
+        #     continue
 
         print(f"{name} generated {len(results)} states")
 

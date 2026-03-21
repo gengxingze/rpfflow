@@ -21,7 +21,7 @@ class RxnState:
     - stage: 反应阶段 (adsorption, reduction, etc.)
     """
     graphs: Tuple[nx.Graph, ...]
-    h_cost: int = 0
+    # h_cost: int = 0
     stage: str = "adsorption"
     penalty: float = 0.0
     slab: Atoms = None
@@ -149,21 +149,20 @@ class RxnState:
     # 3. 状态演化工具
     # =====================================================
 
-    def derive(self, new_graphs: List[nx.Graph], h_cost: int = 0, **kwargs) -> "RxnState":
+    def derive(self, new_graphs: List[nx.Graph], **kwargs) -> "RxnState":
         """
         生成衍生状态的快捷方式 (用于搜索展开)
         example: state.derive(new_graphs=fragments, h_cost=1, stage="reduction")
         """
         updates = {
             "graphs": tuple(new_graphs),
-            "h_cost":  h_cost,
             **kwargs
         }
         # replace 函数是 dataclasses 提供的克隆并更新的方法
         return replace(self, **updates)
 
     def __repr__(self):
-        return (f"<RxnState C={self.n_carbon} | H={self.h_cost} | "
+        return (f"<RxnState C={self.n_carbon} |"
                 f"CC={self.has_cc_bond} | Signature={" + ".join(self.signature[0])}>")
 
 
@@ -261,7 +260,7 @@ class SearchNode:
     # =====================================================
     def __repr__(self):
         return (f"Node(id={self.node_id}, depth={self.depth}, "
-                f"action='{self.action}', cost={self.cumulative_h_cost}, "
+                f"action='{self.action}', cumulative_h_cost={self.cumulative_h_cost}, "
                 f"state={self.state})")
 
     def save_reaction_path(self, filename="reaction_path.extxyz"):

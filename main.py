@@ -19,7 +19,7 @@ def main():
     # === 2. 构建反应物与产物图结构 ===
     # 示例：使用 [O]C(=O)F 作为起始状态，C (Methane) 或 CH3OH 作为目标
     smiles_react = 'O=C(F)[O]'
-    smiles_prod = 'C[OH]'
+    smiles_prod = 'C'
 
     mol_react = create_mol(smiles_react, add_h=True)
     mol_prod = create_mol(smiles_prod, add_h=True)
@@ -44,7 +44,7 @@ def main():
     slab = read(poscar_path)
 
     # 定义初始状态，设置 H 储备
-    initial_state = RxnState(graphs=(G_react_nx,), h_cost=8,stage=smiles_react, slab=slab)
+    initial_state = RxnState(graphs=(G_react_nx,), stage=smiles_react, slab=slab)
 
     # === 5. 执行 BFS 路径搜索 ===
     logger.info("Executing BFS search...")
