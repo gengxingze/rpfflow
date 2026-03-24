@@ -7,7 +7,7 @@ from ase.io import read
 mol_react = create_mol('[CH3]', add_h=True)                 # CO2 (或简化占位)
 mol_prod  = create_mol("C", add_h=True)
 
-slab = read("./POSCAR")
+slab = read("./Cu.xyz")
 
 ads_candidates, _ = generate_adsorption_structures(
                     adsorbate_ase=rdkit_to_ase(mol_react),

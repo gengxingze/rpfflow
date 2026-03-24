@@ -8,7 +8,7 @@ Visualization utilities for:
 
 Author: Xingze Geng
 """
-
+import os
 from typing import List, Optional, Callable
 import networkx as nx
 import numpy as np
@@ -248,7 +248,7 @@ def save_molecule_2d(
         f.write(drawer.GetDrawingText())
 
 
-def plot_reaction_tree(paths, direction='LR'):
+def plot_reaction_tree(paths, direction='LR', file_name='reaction_tree.png'):
     G = nx.DiGraph()
     node_depths = {}
     layer_counts = {}
@@ -309,87 +309,246 @@ def plot_reaction_tree(paths, direction='LR'):
     plt.title(f"Reaction Tree", fontsize=16, pad=20)
 
     # 自动保存为高分辨率图片以便缩放查看
-    plt.savefig("reaction_path.png", dpi=300, bbox_inches='tight')
+    plt.savefig(file_name, dpi=300)
     plt.show()
 
 
-def plot_energy_profile(energy_list, smiles, title="Reaction Energy Profile",
-                        colors=None, file_name="EnergyProfile_Professional_pt.png", label=None):
+def draw_reaction_networks(all_paths, highlight_index=0, output_name="reaction_network", format="png"):
     """
-    美化版反应能量图绘制函数
+    根据路径列表绘制反应网络图
+
+    Parameters
+    ----------
+    all_paths : List[Tuple[str]]
+        每条路径是一个 tuple，如:
+        ('A', 'B', 'C', ...)
+    highlight_index : int
+        高亮哪一条路径（主路径）
+    output_name : str
+        输出文件名
+    format : str
+        输出格式 (png/pdf/svg)
     """
-    # 统一处理数据格式
-    if not isinstance(energy_list[0], (list, np.ndarray, tuple)):
+    os.environ["PATH"] += os.pathsep + r'D:\Program\Graphviz\bin'
+    from graphviz import Digraph
+    dot = Digraph(format=format)
+
+    # ================= 全局样式 =================
+    dot.attr(rankdir="TB", splines="spline", nodesep="0.5", ranksep="0.6", dpi='300')
+    dot.attr("node",
+             shape="box",
+             style="rounded,filled",
+             fontname="Helvetica",
+             fontsize="11",
+             fillcolor="#FAFAFA",
+             color="#4A90E2")
+
+    dot.attr("edge",
+             color="#666666",
+             arrowsize="0.7",
+             penwidth="1.1",
+             fontname="Helvetica")
+
+    # ================= 收集所有节点 =================
+    nodes = set()
+    edges = set()
+
+    for path in all_paths:
+        for i in range(len(path)):
+            nodes.add(path[i])
+            if i < len(path) - 1:
+                edges.add((path[i], path[i + 1]))
+
+    # ================= 画节点 =================
+    for node in nodes:
+
+        # 起点
+        if any(node == p[0] for p in all_paths):
+            dot.node(node, fillcolor="#2C3E50", fontcolor="white", color="#1A252F", penwidth="2")
+
+        # 终点
+        elif any(node == p[-1] for p in all_paths):
+            dot.node(node, shape="ellipse", fillcolor="#E8F5E9", color="#2E7D32", penwidth="2")
+
+        # 关键中间体（例：CH3）
+        elif node == "[CH3]":
+            dot.node(node, fillcolor="#FFF3E0", color="#E65100", penwidth="1.8")
+
+        else:
+            dot.node(node)
+
+    # ================= 主路径 =================
+    # main_path = all_paths[highlight_index]
+    # main_edges = set((main_path[i], main_path[i + 1])
+    #                  for i in range(len(main_path) - 1))
+
+    # ================= 画边 =================
+    for u, v in edges:
+        # if (u, v) in main_edges:
+        #     dot.edge(u, v, color="#000000", enwidth="2.0")
+        # else:
+            dot.edge(u, v, style="dashed", color="#999999")
+
+    # ================= 输出 =================
+    dot.render(output_name, view=False)
+    return dot
+
+def plot_energy_profile(
+        energy_list,
+        states=None,
+        mode="sequence",   # "sequence" or "aligned"
+        title="Energy Diagram",
+        colors=None,
+        labels=None,
+        show_values=True,
+        step_width=0.6,
+        gap=0.4,
+        save_path=None):
+    """
+    通用能量图绘制函数
+
+    Parameters
+    ----------
+    energy_list : list of list
+    states : list (sequence模式) 或 list of list (aligned模式)
+    mode : "sequence" | "aligned"
+    """
+
+    # -------- 输入统一 --------
+    if not isinstance(energy_list[0], (list, tuple, np.ndarray)):
         energy_list = [energy_list]
 
-    # 2. 配色方案：使用更高级的调色盘
     if colors is None:
-        # 典型的科研配色：深蓝、深红、翠绿、紫罗兰
         colors = ['#08519c', '#a50f15', '#006d2c', '#54278f']
-
-    # 绘图参数
-    step_width = 0.6  # 平台宽度
-    gap = 0.4  # 平台间距
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    for group_idx, energies in enumerate(energy_list):
-        color = colors[group_idx % len(colors)]
+    # =========================================================
+    # 🔷 模式2：对齐模式（StepChartPlotter）
+    # =========================================================
+    if mode == "aligned":
+        data_list = []
+        for i in range(len(energy_list)):
+            data_list.append({"states": states[i], "energies": energy_list[i], "label": labels[i]})
 
-        for i in range(len(energies)):
-            x_start = i * (step_width + gap)
-            x_end = x_start + step_width
-            curr_e = energies[i]
+        # --- 1. 核心改进：计算全局最优排序 (拓扑对齐) ---
+        # 我们需要一个列表来存储所有状态，顺序尽量符合所有路径的先后
+        global_order = []
+        for entry in data_list:
+            states = entry['states']
+            for i, s in enumerate(states):
+                if s not in global_order:
+                    # 寻找插入位置：放在上一个已知状态的后面
+                    if i == 0:
+                        global_order.insert(0, s)
+                    else:
+                        prev_s = states[i - 1]
+                        idx = global_order.index(prev_s)
+                        global_order.insert(idx + 1, s)
+                else:
+                    # 如果已经在里面了，检查是否违背了当前的先后顺序
+                    # (处理 A-B-D-C 这种逻辑，此处可根据需要做更复杂的 DAG 排序)
+                    pass
+        # 建立映射
+        state_to_x = {s: i for i, s in enumerate(global_order)}
 
-            # 3. 绘制水平能级 (添加了轻微的阴影效果或加粗)
-            # --- 关键修改：只在 i == 0 时传入 label ---
-            if i == 0:
-                ax.hlines(curr_e, x_start, x_end, color=color, lw=3.5, zorder=3, label=label[group_idx] if label else None)
-            else:
-                ax.hlines(curr_e, x_start, x_end, color=color, lw=3.5, zorder=3)
+        # --- 2. 绘图 ---
+        for p_idx, entry in enumerate(data_list):
+            color = colors[p_idx % len(colors)]
+            states = entry['states']
+            energies = entry['energies']
+
+            # 记录每一步的端点，用于连线
+            path_coords = []
+            already_states = []
+
+            for i in range(len(states)):
+                s = states[i]
+                e = energies[i]
+                x_center = state_to_x[s]
+                # 绘制台阶
+                x_start, x_end = x_center - step_width / 2, x_center + step_width / 2
+                # 台阶
+                ax.hlines(e, x_start, x_end, color=color, lw=3.5, zorder=3, label=labels[p_idx] if (labels and i == 0) else None)
+
+                # 数值
+                if show_values:
+                    ax.text((x_start + x_end)/2, e + 0.03,f"{e:.2f}", ha='center', va="bottom", fontsize=9, color=color)
+
+                # 状态标签（只画一次）
+                if states is not None and states not in already_states:
+                    y = e - 0.2
+
+                    ax.text((x_start + x_end) / 2,y,states[i],ha='center',va='top',fontsize=8,fontweight='regular',
+                        style='italic'
+                    )
+                    already_states.append(states[i])
+                # 存储坐标信息
+                path_coords.append({'x_start': x_start, 'x_end': x_end, 'y': e})
+
+            # 连接线
+            # 绘制连线
+            for i in range(len(path_coords) - 1):
+                curr = path_coords[i]
+                nxt = path_coords[i + 1]
+
+                # 检查是否是“回头路”
+                ls = '--' if nxt['x_start'] >= curr['x_end'] else '-.'
+                alpha = 0.6 if ls == '-' else 0.3  # 回头路用淡虚线
+
+                ax.plot([curr['x_end'], nxt['x_start']], [curr['y'], nxt['y']],
+                        color=color, lw=1.5, ls=ls, alpha=alpha, zorder=2)
+        ax.set_xticklabels([])
+    # =========================================================
+    # 🔷 模式1：顺序模式（你现在这个函数）
+    # =========================================================
+    elif mode == "sequence":
+
+        for g_idx, energies in enumerate(energy_list):
+            color = colors[g_idx % len(colors)]
+            for i, e in enumerate(energies):
+                x_start = i * (step_width + gap)
+                x_end = x_start + step_width
+                # 台阶
+                ax.hlines(e, x_start, x_end, color=color, lw=3.5, zorder=3, label=labels[g_idx] if (labels and i == 0) else None)
+
+                # 数值
+                if show_values:
+                    ax.text((x_start + x_end)/2, e + 0.03,f"{e:.2f}", ha='center', fontsize=9, color=color)
+
+                # 状态标签（只画一次）
+                if states is not None and g_idx == 0:
+                    all_e = [g[i] for g in energy_list if i < len(g)]
+                    ax.text((x_start + x_end)/2, min(all_e) - 0.15,states[i], ha='center', fontsize=8)
+
+                # 连接线
+                if i > 0:
+                    prev_x = (i - 1) * (step_width + gap) + step_width
+                    ax.plot([prev_x, x_start],[energies[i-1], e], color=color, ls='--', lw=1.2, alpha=0.7, zorder=2)
 
 
-            # 4. 绘制数值标注 (在能级上方显示具体的 ΔE)
-            # 只在非零值上标注，或者全部标注
-            ax.text((x_start + x_end) / 2, curr_e + 0.05, f"{curr_e:.2f}",
-                    ha='center', va='bottom', color=color, fontsize=9, fontweight='bold')
+    else:
+        raise ValueError("mode 必须是 sequence 或 aligned")
 
-            # 5. 标注化学式标签 (优化了位置和旋转角度)
-            if group_idx == 0:
-                # 寻找所有组在该步骤的最低能量，避免标签重叠
-                all_step_energies = [g[i] for g in energy_list if i < len(g)]
-                min_e = min(all_step_energies)
-                ax.text((x_start + x_end) / 2, min_e - 0.15, smiles[i],
-                        ha='center', va='top', fontsize=8, fontweight='regular', style='italic')
-
-            # 6. 绘制连接线：改用更平滑的虚线或细实线
-            if i > 0:
-                prev_x_end = (i - 1) * (step_width + gap) + step_width
-                prev_e = energies[i - 1]
-                ax.plot([prev_x_end, x_start], [prev_e, curr_e],
-                        color=color, linestyle='--', lw=1.2, alpha=0.6, zorder=2)
-
-    # 7. 细节修饰
+    # -------- 通用美化 --------
     ax.axhline(0, color='#636363', lw=1, ls='-', alpha=0.3, zorder=1)  # 零能级参考线
-
-
     # 坐标轴标签
-    ax.set_ylabel('$\Delta G$ or $\Delta E$ (eV)', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Reaction Coordinate', fontsize=14, fontweight='bold')
-    ax.set_title(title, fontsize=16, pad=20)
+    ax.set_title(title, fontsize=14, pad=20)
+    ax.set_ylabel('Energy (eV)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Reaction Coordinate', fontsize=16, fontweight='bold')
 
-    # 隐藏X轴刻度
-    ax.set_xticks([])
+    if mode == "sequence":
+        ax.set_xticks([])
 
-    # 设置Y轴网格线（可选）
     ax.grid(axis='y', linestyle=':', alpha=0.4)
 
-    # 只要调用 legend() 即可，Matplotlib 会自动匹配颜色
-    if label is not None:
-        ax.legend(frameon=False, loc='best', fontsize=10)
+    if labels:
+        ax.legend(frameon=False, loc="best", fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(file_name,dpi=300)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300)
     plt.show()
 
 # ============================================================
@@ -417,11 +576,20 @@ if __name__ == "__main__":
     # save_molecule_2d(mol_tmp)
     # save_molecule_2d(mol, filename="../../graph_mm/test.png")
     #
-    from rpfflow.core.structure import process_extxyz_energies
-    aa = process_extxyz_energies("../../path_result_pt.extxyz")
-    bb = process_extxyz_energies("../../path_result_Ag.extxyz")
-    cc = process_extxyz_energies("../../path_result_Cu.extxyz")
-    plot_energy_profile([aa[2], bb[2], cc[2]], smiles=aa[1], label=["Pt", "Ag", "Cu"])
+
+
+
+    # Ag_DFT = process_extxyz_energies("../../path_Ag_updated.extxyz")
+    # Cu_DFT = process_extxyz_energies("../../path_Cu_updated.extxyz")
+    # Pt_DFT = process_extxyz_energies("../../path_Pt_updated.extxyz")
+    # plot_energy_profile([Ag_DFT[2], Cu_DFT[2], Pt_DFT[2]], states=Ag_DFT[1], labels=["DFT-Ag", "DFT-Cu", "DFT-Pt"], mode="sequence", title="Energy Diagram")
+
+    Cu = process_extxyz_energies("../../path_result_Cu.extxyz")
+    Cu_1 = process_extxyz_energies("../../path_result_Cu_1.extxyz")
+    Cu_2 = process_extxyz_energies("../../path_result_Cu_2.extxyz")
+    plot_energy_profile([Cu[2], Cu_1[2], Cu_2[2]], states=[Cu[1], Cu_1[1], Cu_2[1]], labels=["path=1", "path=2", "path=3"],
+                        mode="aligned",save_path="EnergyProfile_Cu.png")
+
     print("✓ Visualization done.")
 
 

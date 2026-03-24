@@ -67,13 +67,13 @@ class DissociationAction(ReactionAction):
         # 获取预定义的分子模型（建议从配置或外部传入）
         # OH_molecule, H2O_molecule = ...
 
-        for idx in state.carbon_indices:
+        for idx in state.element_indices():
             graph = state.graphs[idx]
 
             # 价键自由度保护，避免产生高欠配位结构，检查节点中的C原子的get("valence", 0) <= 2， 否则跳过!
             # !!!!!这里需要非常权衡，既不能丢失结构， 又不能允许过松的配位
             if any(
-                    graph.nodes[n]["symbol"] == "C" and graph.nodes[n].get("valence", 0) >=2
+                    graph.nodes[n]["symbol"] in ["C", "N"] and graph.nodes[n].get("valence", 0) >=2
                     for n in graph.nodes
             ):
                 continue
@@ -139,7 +139,7 @@ class HydrogenationAction(ReactionAction):
         # H_molecule 通常是单原子 H 或 H* 的图表示
         # H_atom = ...
 
-        for idx in state.carbon_indices:
+        for idx in state.element_indices():
             graph = state.graphs[idx]
 
             for n in graph.nodes:
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     # 1️⃣ 构建测试体系
     # =========================
     # [OH][C](F)[OH]   O=C(F)O [CH][F]
-    mol_1 = create_mol('[OH][C](F)[OH]', add_h=True)
+    mol_1 = create_mol('[O]N(F)[O]', add_h=True)
     mol_2 = create_mol('[CH3][F]', add_h=True)
     G_graph_1 = rdkit_to_nx(mol_1)
     update_valence(G_graph_1)
@@ -307,10 +307,10 @@ if __name__ == "__main__":
     save_molecule_2d(mol_1, f"debug_mol_1.png")
     save_molecule_2d(mol_2,  f"debug_mol_2.png")
 
-    slab = read("../tests/POSCAR")
+    slab = read("../tests/Cu.xyz")
 
     # 两个片段用于测试 coupling
-    state = RxnState(graphs=(G_graph_2, H2O),stage="ROOT", slab=slab)
+    state = RxnState(graphs=(G_graph_1, H2O),stage="ROOT", slab=slab)
 
     print(f"Initial state built: {state}")
 

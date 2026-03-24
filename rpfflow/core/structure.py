@@ -418,10 +418,6 @@ def process_extxyz_energies(filename, h_energy=-3.4):
         """判断是否只包含 C/N"""
         return bool(set(atoms.get_chemical_symbols()) & {"C", "N"})
 
-    def count_H(atoms):
-        """统计 H 原子数"""
-        return atoms.get_chemical_symbols().count("H")
-
     # -------------------------
     # 3. 计算结果
     # -------------------------
@@ -446,7 +442,6 @@ def process_extxyz_energies(filename, h_energy=-3.4):
             reactions_step = sorted_steps[i - 1]
             reactions = []
 
-            products_n_h = 0
             for atoms in step_data[reactions_step]['atoms_list']:
                 if is_has_cn(atoms):
                     reactions.append(atoms)
@@ -509,7 +504,7 @@ def compute_adsorption_energy(reactants, products):
         print("检测到仅差一个 H 原子，自动使用 1/2 H2 进行补偿。")
 
         # 查找H2能量
-        H2_energy =  -6.859108
+        H2_energy =  -6.772668
 
         if H2_energy is None:
             raise ValueError("H2分子异常，无法进行1/2 H2补偿。")

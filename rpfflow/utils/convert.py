@@ -56,7 +56,7 @@ def nx_to_rdkit(G: nx.Graph) -> Chem.Mol:
 
     # 2. 添加原子并处理自由基
     for nid, attr in G.nodes(data=True):
-        symbol = attr.get("symbol", "C")
+        symbol = attr.get("symbol", "*")
         atom = Chem.Atom(symbol)
 
         # 处理电荷

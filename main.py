@@ -7,7 +7,7 @@ from rpfflow.core.structure import create_mol
 from rpfflow.rules.basica import check_element_conservation, update_valence
 from rpfflow.core.state import RxnState, collect_paths_from_nodes, save_search_results, load_search_results
 from rpfflow.core.model import bfs_search
-from rpfflow.utils.visualizer import plot_reaction_tree, save_molecule_2d
+from rpfflow.utils.visualizer import plot_reaction_tree, save_molecule_2d, draw_reaction_networks
 
 
 def main():
@@ -18,7 +18,7 @@ def main():
 
     # === 2. 构建反应物与产物图结构 ===
     # 示例：使用 [O]C(=O)F 作为起始状态，C (Methane) 或 CH3OH 作为目标
-    smiles_react = 'O=C(F)[O]'
+    smiles_react = '[O]C(=O)F'
     smiles_prod = 'C'
 
     mol_react = create_mol(smiles_react, add_h=True)
@@ -64,7 +64,8 @@ def main():
     logger.info(f"[OK] Found really unique {len(unique_paths)} reaction paths.")
     # 保存第一个找到的路径为轨迹文件 (extxyz)
     result_nodes[0].save_reaction_path("path_result_Cu.extxyz")
-
+    result_nodes[2].save_reaction_path("path_result_Cu_1.extxyz")
+    result_nodes[8].save_reaction_path("path_result_Cu_2.extxyz")
     # 序列化搜索结果
     save_search_results(result_nodes)
 
@@ -73,7 +74,7 @@ def main():
 
     # 绘制反应树图
     plot_reaction_tree(all_paths)
-
+    draw_reaction_networks(all_paths)
     # 导出路径中每一步的 2D 分子结构图
     output_dir = "rpfflow/tests/visuals"
     os.makedirs(output_dir, exist_ok=True)
@@ -97,5 +98,10 @@ if __name__ == "__main__":
     # slab = read("rpfflow/tests/Pt.xyz")
     # pt_path = replace_slab(loaded_paths[0], slab)
     # pt_path.save_reaction_path("path_result_Pt.extxyz")
-
-    print("main.py end.")
+    # path_test = [["A", "B", "C", "D"],
+    #              ["A", "B", "E", "D"],
+    #              ["A", "B", "C", "F"],
+    #              ["A", "E", "C", "D", "G"],
+    #              ]
+    # plot_reaction_tree(path_test, file_name="test_reaction_tree.png")
+    # print("main.py end.")

@@ -18,7 +18,6 @@ def replace_slab(end_node: SearchNode, slab: Atoms) -> SearchNode:
         # ⚡ 轻量复制（graphs 直接复用，不 deepcopy）
         new_state = RxnState(
             graphs=state.graphs,  # 共享（假设不被修改）
-            h_cost=state.h_cost,
             stage=state.stage,
             penalty=state.penalty,
             slab=slab  # ✅ 替换
