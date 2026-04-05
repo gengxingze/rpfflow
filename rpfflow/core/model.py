@@ -8,6 +8,7 @@ from typing import List, Optional, Iterable
 from rpfflow.core.action import HydrogenationAction, DissociationAction, CouplingAction, AssociationAction
 from rpfflow.core.state import RxnState, SearchNode
 from rpfflow.rules.matchs import is_duplicate
+from rpfflow.core.cutter import transition_probability
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
 
 
         # 扩展节点
+        expand_node = []
         for rule in rules:
             rule_name = type(rule).__name__
             stats.rule_metrics[rule_name]["calls"] += 1
@@ -101,30 +103,52 @@ def bfs_search(initial_state: RxnState, target_graph, n_hydrogen=8, rules=None, 
             try:
                 for next_state, action_desc, h_cost in rule.apply(current_node.state):
                     if next_state is None: continue
-
-                    # 剪枝逻辑
-                    total_h_cost = current_node.cumulative_h_cost + h_cost
-                    if total_h_cost > n_hydrogen:
-                        stats.pruned_h += 1
-                        continue
-
-                    # 创建子节点
-                    child_node = SearchNode(
-                        state=next_state, parent=current_node,
-                        action=action_desc, step_h_cost=h_cost
-                    )
-
-                    # 剪枝逻辑， 是否回环 A-B-C-B
-                    # if current_node.step_signature in current_node.path_signature_tuple:
-                    #     continue
-
-                    queue.append(child_node)
+                    expand_node.append((next_state, action_desc, h_cost))
                     stats.generated += 1
                     stats.rule_metrics[rule_name]["gen"] += 1
 
             except Exception as e:
                 stats.rule_metrics[rule_name]["err"] += 1
                 logger.error(f"Rule {rule_name} 异常: {e}", exc_info=True)
+
+            # 1. 预选池：存放所有通过基础剪枝的候选子节点
+            candidates = []
+
+            for i, (next_state, action_desc, h_cost) in enumerate(expand_node):
+                # 基础剪枝：氢平衡
+                total_h_cost = current_node.cumulative_h_cost + h_cost
+                if total_h_cost > n_hydrogen:
+                    stats.pruned_h += 1
+                    continue
+
+                # 创建临时节点对象（先不进队列）
+                child_node = SearchNode(
+                        state=next_state, parent=current_node,
+                        action=action_desc, step_h_cost=h_cost
+                    )
+                # 计算转移概率 delta_G = E_next - E_current
+                # 注意：这里是用当前步的增量来评估“这一步”的优劣
+                delta_g = child_node.adsorption_energy
+                prob = transition_probability(delta_g)
+
+
+                # 将概率存入节点或元组中，方便排序
+                candidates.append((prob, child_node))
+            use_beam_search, beam_width = True, 1
+            # 2. 排序与筛选逻辑
+            if use_beam_search and beam_width is not None:
+                # 按概率从大到小排序
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                # 只取前 N 个
+                targets = candidates[:beam_width]
+            else:
+                # 开关关闭，全量放入
+                targets = candidates
+
+            # 3. 正式放进队列
+            for prob, node in targets:
+                queue.append(node)
+
 
     stats.report_final()
     return found_paths

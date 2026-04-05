@@ -45,7 +45,12 @@ def main():
 
     # 定义初始状态，设置 H 储备
     initial_state = RxnState(graphs=(G_react_nx,), stage=smiles_react, slab=slab)
+    final_state = RxnState(graphs=(G_prod_nx,), stage=smiles_prod, slab=slab)
 
+    # E_salb =-418.8836059
+    initial_energy = sum(atoms.get_potential_energy() for atoms in initial_state.stable_structures)
+    final_energy = sum(atoms.get_potential_energy() for atoms in final_state.stable_structures)
+    detal_step = (final_energy-initial_energy)/8
     # === 5. 执行 BFS 路径搜索 ===
     logger.info("Executing BFS search...")
     result_nodes = bfs_search(initial_state, G_prod_nx, n_hydrogen=8, max_paths=100, max_depth=10)
@@ -63,9 +68,9 @@ def main():
     unique_paths = [list(p) for p in unique_paths]
     logger.info(f"[OK] Found really unique {len(unique_paths)} reaction paths.")
     # 保存第一个找到的路径为轨迹文件 (extxyz)
-    result_nodes[0].save_reaction_path("path_result_Cu.extxyz")
-    result_nodes[2].save_reaction_path("path_result_Cu_1.extxyz")
-    result_nodes[8].save_reaction_path("path_result_Cu_2.extxyz")
+    # result_nodes[0].save_reaction_path("path_result_Cu.extxyz")
+    # result_nodes[2].save_reaction_path("path_result_Cu_1.extxyz")
+    # result_nodes[8].save_reaction_path("path_result_Cu_2.extxyz")
     # 序列化搜索结果
     save_search_results(result_nodes)
 
@@ -89,7 +94,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # loaded_paths = load_search_results()
+    loaded_paths = load_search_results()
     # from rpfflow.utils.process import replace_slab
     # slab = read("rpfflow/tests/Ag.xyz")
     # pt_path = replace_slab(loaded_paths[0], slab)
@@ -105,3 +110,6 @@ if __name__ == "__main__":
     #              ]
     # plot_reaction_tree(path_test, file_name="test_reaction_tree.png")
     # print("main.py end.")
+
+
+
